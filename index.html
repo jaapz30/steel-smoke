@@ -52,35 +52,66 @@
     <div class="screen-header">
       <div class="flex-between">
         <div><h1>DASHBOARD</h1><div class="subtitle" id="dash-date">Laden...</div></div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <div style="text-align:right;"><div style="font-family:var(--font-mono);font-size:12px;color:var(--steel)" id="dash-time">--:--</div><div style="font-size:12px;color:var(--red-hot);font-weight:700" id="dash-streak">🔥 0 dagen</div></div>
-          <button onclick="showScreen('settings')" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--steel);padding:6px 8px;font-size:18px;cursor:pointer;">⚙️</button>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <div style="text-align:right;"><div style="font-family:var(--font-mono);font-size:11px;color:var(--steel)" id="dash-time">--:--</div><div style="font-size:11px;color:var(--red-hot);font-weight:700" id="dash-streak">🔥 0 dagen</div></div>
+          <button onclick="showScreen('settings')" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--steel);padding:6px 8px;font-size:18px;cursor:pointer;" title="Instellingen">⚙️</button>
         </div>
       </div>
     </div>
     <div class="greeting-bar"><div class="greeting-text" id="greeting-text">Goedmorgen, Soldaat!</div></div>
+
+    <!-- Beweegvoortgang balk -->
+    <div class="card card-green" style="margin:10px 16px 0;">
+      <div class="flex-between" style="margin-bottom:6px">
+        <div class="card-title" style="margin:0">🏃 Bewegen Vandaag</div>
+        <div id="move-bar-status" style="font-size:12px;color:var(--steel)">0 min te gaan</div>
+      </div>
+      <div class="progress-bar" style="height:10px;border-radius:5px;">
+        <div class="progress-fill green" id="move-bar-fill" style="width:0%;border-radius:5px;transition:width 0.5s ease;"></div>
+      </div>
+      <div id="move-bar-label" style="font-size:11px;color:var(--steel);margin-top:4px;font-family:var(--font-mono);">0/30 min bewogen</div>
+    </div>
+
+    <!-- Sport advies op beginscherm -->
+    <div class="card card-red" style="margin:10px 16px 0;" id="dash-advice-card"></div>
+
+    <!-- Gewicht stats -->
     <div class="stats-grid">
       <div class="stat-block"><div class="stat-value" id="dash-weight-start">--</div><div class="stat-label">Start (kg)</div></div>
       <div class="stat-block green"><div class="stat-value" id="dash-weight-now">--</div><div class="stat-label">Nu (kg)</div></div>
       <div class="stat-block red"><div class="stat-value" id="dash-weight-lost">--</div><div class="stat-label">Verloren (kg)</div></div>
       <div class="stat-block amber"><div class="stat-value" id="dash-bmi">--</div><div class="stat-label">BMI</div></div>
     </div>
+
     <div style="padding:0 16px;display:flex;gap:8px;">
       <button class="btn btn-steel btn-sm" style="flex:1" onclick="showWeightModal()">📊 Gewicht</button>
       <button class="btn btn-amber btn-sm" style="flex:1" onclick="showTodayDetail()">📅 Vandaag Bekijken</button>
     </div>
-    <div class="card card-steel mt-12"><div class="card-title">Gewichtsverloop</div><canvas id="weight-chart" height="100"></canvas><div style="text-align:center;color:var(--steel);font-size:12px;margin-top:8px" id="weight-chart-empty">Nog geen gegevens — log je gewicht</div></div>
+
+    <div class="card card-steel mt-12"><div class="card-title">Gewichtsverloop</div><canvas id="weight-chart" height="100"></canvas><div style="text-align:center;color:var(--steel);font-size:12px;margin-top:8px" id="weight-chart-empty">Nog geen gegevens</div></div>
+
     <div class="card card-amber">
-      <div class="card-title">Vandaag</div>
+      <div class="card-title">Calorieën Vandaag</div>
       <div class="flex-between">
-        <div><div style="font-size:13px;color:var(--steel)">Gegeten</div><div style="font-family:var(--font-mono);font-size:24px;color:var(--amber)" id="dash-kcal-eaten">0 kcal</div></div>
-        <div><div style="font-size:13px;color:var(--steel)">Verbrand</div><div style="font-family:var(--font-mono);font-size:24px;color:var(--green-bright)" id="dash-kcal-burned">0 kcal</div></div>
-        <div><div style="font-size:13px;color:var(--steel)">Doel</div><div style="font-family:var(--font-mono);font-size:24px;" id="dash-kcal-goal">-- kcal</div></div>
+        <div><div style="font-size:12px;color:var(--steel)">Gegeten</div><div style="font-family:var(--font-mono);font-size:22px;color:var(--amber)" id="dash-kcal-eaten">0 kcal</div></div>
+        <div><div style="font-size:12px;color:var(--steel)">Verbrand</div><div style="font-family:var(--font-mono);font-size:22px;color:var(--green-bright)" id="dash-kcal-burned">0 kcal</div></div>
+        <div><div style="font-size:12px;color:var(--steel)">Doel</div><div style="font-family:var(--font-mono);font-size:22px;" id="dash-kcal-goal">-- kcal</div></div>
       </div>
       <div class="progress-bar-wrap mt-8"><div class="progress-bar"><div class="progress-fill amber" id="dash-cal-bar" style="width:0%"></div></div></div>
     </div>
-    <div class="card card-green"><div class="card-title">🚭 Rookvrij</div><div id="dash-smoke-status" style="font-family:var(--font-mono);font-size:20px;color:var(--green-bright)">Stel stopmoment in</div><div id="dash-smoke-saved" style="color:var(--steel);font-size:13px;margin-top:4px"></div></div>
-    <div class="card card-amber"><div class="card-title">⏰ Volgend Eetmoment</div><div id="dash-next-meal" style="font-size:16px;">Laden...</div></div>
+
+    <div class="card card-green"><div class="card-title">🚭 Rookvrij</div><div id="dash-smoke-status" style="font-family:var(--font-mono);font-size:18px;color:var(--green-bright)">Stel stopmoment in</div><div id="dash-smoke-saved" style="color:var(--steel);font-size:12px;margin-top:4px"></div></div>
+    <div class="card card-amber"><div class="card-title">⏰ Volgend Eetmoment</div><div id="dash-next-meal" style="font-size:15px;">Laden...</div></div>
+
+    <!-- Volgend sportmoment coach -->
+    <div class="card card-amber" id="next-sport-card" style="border-left:3px solid var(--amber);">
+      <div class="card-title">⚡ Volgend Sportmoment</div>
+      <div style="color:var(--steel);font-size:13px;">Bezig met berekenen...</div>
+    </div>
+
+    <!-- Gewichtstrend -->
+    <div style="padding:0 16px 8px;" id="dash-weight-trend"></div>
+
     <div style="height:16px;"></div>
   </div>
 
@@ -92,7 +123,7 @@
         <button onclick="goHome()" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--steel);padding:6px 10px;font-size:16px;cursor:pointer;">🏠</button>
       </div>
     </div>
-    <div style="padding:12px 16px;display:flex;gap:8px;">
+    <div style="padding:10px 16px;display:flex;gap:8px;">
       <button class="btn btn-amber btn-sm" style="flex:1" onclick="shiftMealsNow()">⏩ Eet Nu</button>
       <button class="btn btn-ghost btn-sm" onclick="showBreakfastPicker()">⏰ Schema</button>
     </div>
@@ -101,12 +132,15 @@
       <div class="card-title">Macro's Vandaag</div>
       <div class="stats-grid" style="margin:0;">
         <div class="stat-block"><div class="stat-value text-amber" id="macro-protein">0g</div><div class="stat-label">Eiwit</div></div>
-        <div class="stat-block"><div class="stat-value" id="macro-carbs">0g</div><div class="stat-label">Koolhydraten</div></div>
+        <div class="stat-block"><div class="stat-value" id="macro-carbs">0g</div><div class="stat-label">Koolhydr.</div></div>
         <div class="stat-block"><div class="stat-value" id="macro-fat">0g</div><div class="stat-label">Vet</div></div>
         <div class="stat-block"><div class="stat-value text-green" id="macro-kcal">0</div><div class="stat-label">kcal</div></div>
       </div>
     </div>
-    <div style="padding:12px 16px;"><div style="font-family:var(--font-display);font-size:18px;letter-spacing:1px;color:var(--steel-light);margin-bottom:10px;text-transform:uppercase;">Mijn Producten</div><div id="food-matrix-main" class="food-matrix" style="margin:0;"></div></div>
+    <div style="padding:12px 16px;">
+      <div style="font-family:var(--font-display);font-size:16px;letter-spacing:1px;color:var(--steel-light);margin-bottom:8px;text-transform:uppercase;">Mijn Producten <span style="font-size:12px;color:var(--steel);">(⭐ = eigen)</span></div>
+      <div id="food-matrix-main" class="food-matrix" style="margin:0;"></div>
+    </div>
     <div style="height:16px;"></div>
   </div>
 
@@ -132,36 +166,34 @@
       </div>
     </div>
 
-    <!-- Dagelijks sport advies -->
-    <div style="padding:12px 16px 4px;"><div style="font-family:var(--font-display);font-size:16px;letter-spacing:1px;color:var(--red-hot);margin-bottom:4px;text-transform:uppercase;">💡 Advies van Vandaag</div></div>
+    <!-- Dagelijks advies op training pagina -->
+    <div style="padding:10px 16px 4px;"><div style="font-family:var(--font-display);font-size:14px;letter-spacing:1px;color:var(--red-hot);text-transform:uppercase;">💡 Advies van Vandaag</div></div>
     <div class="card card-red" style="margin:0 16px 12px;" id="daily-advice-card"></div>
 
-    <!-- Gym -->
-    <div style="padding:8px 16px 8px;"><div style="font-family:var(--font-display);font-size:16px;letter-spacing:1px;color:var(--steel-light);text-transform:uppercase;">🏋️ Gym — Druk om te starten</div></div>
+    <!-- Gym knoppen -->
+    <div style="padding:8px 16px 4px;"><div style="font-family:var(--font-display);font-size:14px;letter-spacing:1px;color:var(--steel-light);text-transform:uppercase;">🏋️ Gym — Tik om te starten</div></div>
     <div class="gym-buttons" id="gym-buttons-grid"></div>
 
     <!-- GPS -->
-    <div style="padding:16px 16px 4px;"><div style="font-family:var(--font-display);font-size:16px;letter-spacing:1px;color:var(--steel-light);text-transform:uppercase;">🗺️ GPS — Kies activiteit &amp; druk</div></div>
-    <div class="gps-panel" style="margin:0 16px 12px;">
+    <div style="padding:12px 16px 4px;"><div style="font-family:var(--font-display);font-size:14px;letter-spacing:1px;color:var(--steel-light);text-transform:uppercase;">🗺️ GPS — Kies &amp; tik om te starten</div></div>
+    <div style="margin:0 16px 12px;background:var(--card);border:1px solid var(--border);border-radius:4px;padding:14px;">
       <div class="gps-activity-buttons" id="gps-activity-buttons"></div>
       <button class="btn btn-red btn-sm" style="display:none;width:100%;margin-bottom:10px;" id="gps-stop-btn" onclick="stopGPS()">⏹ Stop GPS &amp; Sla Op</button>
-      <div class="gps-stats">
+      <div class="gps-stats" style="margin-top:8px;">
         <div class="gps-stat"><div class="v" id="gps-distance">0.0</div><div class="l">km</div></div>
         <div class="gps-stat"><div class="v" id="gps-speed">0.0</div><div class="l">km/u</div></div>
         <div class="gps-stat"><div class="v" id="gps-kcal">0</div><div class="l">kcal</div></div>
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
-        <div style="font-family:var(--font-display);font-size:14px;color:var(--steel)" id="gps-mode-label">Kies een activiteit</div>
-        <div id="gps-status" style="font-size:11px;color:var(--steel);font-family:var(--font-mono);"></div>
+      <div style="display:flex;justify-content:space-between;margin-top:8px;">
+        <div style="font-family:var(--font-display);font-size:13px;color:var(--steel)" id="gps-mode-label">Kies een activiteit</div>
+        <div id="gps-status" style="font-size:10px;color:var(--steel);font-family:var(--font-mono)"></div>
       </div>
     </div>
 
-    <!-- Recent trainingen -->
+    <!-- Recente sessies -->
     <div class="card card-steel" style="margin:0 16px 12px;">
-      <div class="flex-between" style="margin-bottom:10px">
-        <div class="card-title" style="margin:0">Recente Sessies</div>
-      </div>
-      <div id="recent-trainings"><div style="color:var(--steel);font-size:14px;">Nog geen trainingen gelogd</div></div>
+      <div class="card-title">Recente Sessies</div>
+      <div id="recent-trainings"><div style="color:var(--steel);font-size:14px;">Nog geen trainingen</div></div>
     </div>
     <div style="height:16px;"></div>
   </div>
@@ -181,9 +213,9 @@
     </div>
     <div id="smoke-counter-section" style="display:none;">
       <div class="smoke-counter">
-        <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--steel);margin-bottom:8px;">ROOKVRIJ SINCE</div>
+        <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--steel);margin-bottom:8px;">ROOKVRIJ SINCE</div>
         <div class="smoke-time" id="smoke-time-display">00:00:00:00</div>
-        <div class="smoke-label" id="smoke-days-display">0 dagen, 0 uur, 0 minuten</div>
+        <div class="smoke-label" id="smoke-days-display">0 dagen, 0 uur</div>
       </div>
       <div class="stats-grid">
         <div class="stat-block green"><div class="stat-value" id="smoke-cigs-not">0</div><div class="stat-label">Niet Gerookt</div></div>
@@ -192,13 +224,13 @@
         <div class="stat-block red"><div class="stat-value text-red" id="smoke-kcal-saved">0</div><div class="stat-label">kcal Vermeden</div></div>
       </div>
       <button id="sos-btn" onclick="activateSOS()">🚨 SOS — IK WIL ROKEN</button>
-      <div class="card card-green"><div class="card-title">Gezondheidswinst Tijdlijn</div><div class="health-timeline" id="health-milestones"></div></div>
+      <div class="card card-green"><div class="card-title">Gezondheidswinst</div><div class="health-timeline" id="health-milestones"></div></div>
       <div style="padding:0 16px;"><button class="btn btn-ghost btn-sm" onclick="resetSmokeStop()">↩ Stopmoment aanpassen</button></div>
     </div>
     <div style="height:16px;"></div>
   </div>
 
-  <!-- REPORT SCREEN -->
+  <!-- RAPPORT -->
   <div class="screen" id="screen-report">
     <div class="screen-header">
       <div class="flex-between">
@@ -214,13 +246,13 @@
     </div>
     <div id="report-content"></div>
     <div style="padding:16px;display:flex;flex-direction:column;gap:10px;">
-      <button class="btn btn-red" onclick="exportPDF()">📄 Export PDF (Medisch)</button>
-      <button class="btn btn-ghost btn-sm" onclick="exportText()">📋 Exporteer als Tekst</button>
+      <button class="btn btn-red" onclick="exportPDF()">📄 Export PDF</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportText()">📋 Tekst Export</button>
     </div>
     <div style="height:16px;"></div>
   </div>
 
-  <!-- SETTINGS SCREEN -->
+  <!-- INSTELLINGEN -->
   <div class="screen" id="screen-settings">
     <div class="screen-header">
       <div class="flex-between">
@@ -244,9 +276,9 @@
 <!-- TODAY DETAIL OVERLAY -->
 <div id="today-detail-overlay">
   <div class="today-detail-header">
-    <button onclick="closeTodayDetail()" style="background:none;border:none;color:var(--red-hot);font-size:22px;cursor:pointer;">✕</button>
-    <div style="font-family:var(--font-display);font-size:20px;letter-spacing:1px;">DAGOVERZICHT</div>
-    <button onclick="closeTodayDetail();goHome();" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--steel);padding:4px 10px;font-size:14px;cursor:pointer;margin-left:auto;">🏠 Home</button>
+    <button onclick="closeTodayDetail()" style="background:none;border:none;color:var(--red-hot);font-size:22px;cursor:pointer;padding:4px">✕</button>
+    <div style="font-family:var(--font-display);font-size:18px;letter-spacing:1px;">DAGOVERZICHT</div>
+    <button onclick="closeTodayDetail();goHome();" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--steel);padding:4px 10px;font-size:13px;cursor:pointer;margin-left:auto;">🏠 Home</button>
   </div>
   <div id="today-detail-content"></div>
 </div>
@@ -278,31 +310,29 @@
   <div class="modal-sheet">
     <div class="modal-handle"></div>
     <div class="modal-title" id="meal-modal-title">Eetmoment</div>
-    <div style="display:flex;gap:4px;margin-bottom:14px;overflow-x:auto;">
-      <button id="meal-tabBtn-preset" class="btn btn-amber btn-sm meal-tab-btn active-tab" style="flex:1;min-width:60px" onclick="mealTab('preset')">🍽️ Menu's</button>
-      <button id="meal-tabBtn-menu"   class="btn btn-ghost  btn-sm meal-tab-btn"             style="flex:1;min-width:60px" onclick="mealTab('menu')">🔧 Bouw</button>
-      <button id="meal-tabBtn-custom" class="btn btn-ghost  btn-sm meal-tab-btn"             style="flex:1;min-width:60px" onclick="mealTab('custom')">✏️ Vrij</button>
-      <button id="meal-tabBtn-saved"  class="btn btn-ghost  btn-sm meal-tab-btn"             style="flex:1;min-width:60px" onclick="mealTab('saved');renderSavedMeals()">⭐</button>
+    <div id="meal-nutrition-advice"></div>
+    <div style="display:flex;gap:4px;margin-bottom:12px;overflow-x:auto;">
+      <button id="meal-tabBtn-preset" class="btn btn-amber btn-sm meal-tab-btn active-tab" style="flex:1;min-width:55px;font-size:13px" onclick="mealTab('preset')">🍽️ Menu's</button>
+      <button id="meal-tabBtn-menu"   class="btn btn-ghost  btn-sm meal-tab-btn"            style="flex:1;min-width:55px;font-size:13px" onclick="mealTab('menu')">🔧 Bouw</button>
+      <button id="meal-tabBtn-custom" class="btn btn-ghost  btn-sm meal-tab-btn"            style="flex:1;min-width:55px;font-size:13px" onclick="mealTab('custom')">✏️ Vrij</button>
+      <button id="meal-tabBtn-saved"  class="btn btn-ghost  btn-sm meal-tab-btn"            style="flex:1;min-width:55px;font-size:13px" onclick="mealTab('saved');renderSavedMeals()">⭐</button>
     </div>
-
     <div id="meal-tab-preset"></div>
-
     <div id="meal-tab-menu" style="display:none;">
       <div style="font-size:12px;color:var(--steel);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;">Stel je maaltijd samen</div>
       <div style="display:flex;gap:6px;margin-bottom:8px;">
-        <select class="input-field" id="menu-product-select" style="flex:2;padding:10px;font-size:14px;"></select>
+        <select class="input-field" id="menu-product-select" style="flex:2;padding:10px;font-size:13px;"></select>
         <input type="number" class="input-field" id="menu-qty" placeholder="Aantal" inputmode="decimal" step="0.5" style="flex:1;padding:10px;font-size:14px;">
       </div>
       <button class="btn btn-steel btn-sm" style="margin-bottom:10px" onclick="addMenuProduct()">➕ Voeg toe</button>
       <div id="menu-items-list"></div>
-      <div id="menu-total-bar" style="font-family:var(--font-mono);font-size:13px;color:var(--amber);padding:8px 0;border-top:1px solid var(--border);"></div>
+      <div id="menu-total-bar" style="font-family:var(--font-mono);font-size:12px;color:var(--amber);padding:8px 0;border-top:1px solid var(--border);"></div>
       <div style="display:flex;gap:6px;margin-top:8px;">
-        <input type="text" class="input-field" id="save-menu-name" placeholder="Naam om op te slaan..." style="flex:1">
-        <button class="btn btn-steel btn-sm" onclick="saveCurrentMenu()">⭐</button>
+        <input type="text" class="input-field" id="save-menu-name" placeholder="Naam om op te slaan..." style="flex:1;font-size:13px">
+        <button class="btn btn-steel btn-sm" onclick="saveCurrentMenu()">⭐ Sla op</button>
       </div>
       <button class="btn btn-green mt-8" onclick="markMealDoneMenu()">✅ Opslaan &amp; Klaar</button>
     </div>
-
     <div id="meal-tab-custom" style="display:none;">
       <div style="font-size:12px;color:var(--steel);margin-bottom:10px;text-transform:uppercase;letter-spacing:1px;">Handmatig invoeren</div>
       <div class="input-group"><label class="input-label">Omschrijving <span style="color:var(--red-hot)">*</span></label><input type="text" class="input-field" id="custom-meal-desc" placeholder="bijv. 3 boterhammen met kaas"></div>
@@ -312,11 +342,13 @@
         <div class="input-group"><label class="input-label">Koolhyd. (g)</label><input type="number" class="input-field" id="custom-meal-carbs" placeholder="45" inputmode="decimal"></div>
         <div class="input-group"><label class="input-label">Vet (g)</label><input type="number" class="input-field" id="custom-meal-fat" placeholder="12" inputmode="decimal"></div>
       </div>
+      <div style="display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:10px;background:var(--darker);border-radius:4px;">
+        <input type="checkbox" id="custom-save-as-product" style="width:18px;height:18px;cursor:pointer;accent-color:var(--amber);">
+        <label for="custom-save-as-product" style="font-size:13px;color:var(--steel-light);cursor:pointer;">⭐ Bewaar in <strong>Mijn Producten</strong> voor hergebruik</label>
+      </div>
       <button class="btn btn-green" onclick="markMealDoneCustom()">✅ Opslaan &amp; Klaar</button>
     </div>
-
     <div id="meal-tab-saved" style="display:none;"></div>
-
     <button class="btn btn-ghost btn-sm mt-8" onclick="closeModal('meal-modal')">Annuleer</button>
   </div>
 </div>
@@ -346,6 +378,26 @@
     </div>
     <button class="btn btn-green" onclick="saveCustomSport()">✅ Opslaan</button>
     <button class="btn btn-ghost btn-sm mt-8" onclick="closeModal('add-sport-modal')">Annuleer</button>
+  </div>
+</div>
+
+<!-- ADD FOOD MODAL — eigen product permanent opslaan -->
+<div class="modal-overlay" id="add-food-modal">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">➕ Eigen Product Toevoegen</div>
+    <div style="font-size:13px;color:var(--green-bright);margin-bottom:12px;">⭐ Dit product wordt permanent opgeslagen en altijd zichtbaar in jouw lijst.</div>
+    <div class="input-group"><label class="input-label">Naam <span style="color:var(--red-hot)">*</span></label><input type="text" class="input-field" id="new-food-name" placeholder="bijv. Mijn proteïnereep"></div>
+    <div class="input-group"><label class="input-label">Emoji</label><input type="text" class="input-field" id="new-food-emoji" placeholder="🍫" maxlength="2"></div>
+    <div class="input-group"><label class="input-label">Eenheid (bijv. stuk, 100g, el)</label><input type="text" class="input-field" id="new-food-unit" placeholder="stuk"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      <div class="input-group"><label class="input-label">kcal <span style="color:var(--red-hot)">*</span></label><input type="number" class="input-field" id="new-food-kcal" placeholder="200" inputmode="numeric"></div>
+      <div class="input-group"><label class="input-label">Eiwit (g)</label><input type="number" class="input-field" id="new-food-protein" placeholder="15" inputmode="decimal"></div>
+      <div class="input-group"><label class="input-label">Koolhyd. (g)</label><input type="number" class="input-field" id="new-food-carbs" placeholder="20" inputmode="decimal"></div>
+      <div class="input-group"><label class="input-label">Vet (g)</label><input type="number" class="input-field" id="new-food-fat" placeholder="8" inputmode="decimal"></div>
+    </div>
+    <button class="btn btn-green" onclick="saveCustomFood()">✅ Permanent Opslaan</button>
+    <button class="btn btn-ghost btn-sm mt-8" onclick="closeModal('add-food-modal')">Annuleer</button>
   </div>
 </div>
 

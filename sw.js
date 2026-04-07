@@ -1,43 +1,79 @@
-const CACHE_NAME = 'steel-smoke-v2';
-const ASSETS = [
+// ── SERVICE WORKER v5 — Steel & Smoke ────────────────────────
+// Bump CACHE_VERSION om nieuwe versie af te dwingen
+const CACHE_VERSION = 'v5-20260407-1900';
+const CACHE_NAME = 'steel-smoke-' + CACHE_VERSION;
+
+const STATIC_ASSETS = [
   './index.html',
   './app.js',
   './style.css',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
-  'https://cdn.jsdelivr.net/npm/dexie@3.2.4/dist/dexie.min.js',
-  'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js'
 ];
 
+// INSTALL — cache alle assets
 self.addEventListener('install', e => {
+  console.log('[SW] Installing', CACHE_NAME);
   e.waitUntil(
-    caches.open(CACHE_NAME).then(cache => {
-      return Promise.allSettled(ASSETS.map(url => cache.add(url).catch(() => {})));
-    })
+    caches.open(CACHE_NAME).then(cache =>
+      Promise.allSettled(STATIC_ASSETS.map(url => cache.add(url).catch(err => console.warn('[SW] Cache fail:', url, err))))
+    )
   );
+  // Activeer meteen zonder wachten op clients die sluiten
   self.skipWaiting();
 });
 
+// ACTIVATE — verwijder ALLE oude caches
 self.addEventListener('activate', e => {
+  console.log('[SW] Activating', CACHE_NAME);
   e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    )
+    caches.keys().then(keys => {
+      return Promise.all(
+        keys
+          .filter(k => k !== CACHE_NAME)
+          .map(k => {
+            console.log('[SW] Deleting old cache:', k);
+            return caches.delete(k);
+          })
+      );
+    })
   );
+  // Neem direct controle over alle open tabs
   self.clients.claim();
 });
 
+// FETCH — Network First voor HTML (altijd verse versie), Cache First voor rest
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+
+  const url = new URL(e.request.url);
+
+  // Network-first voor HTML en JS — nooit de cache tonen bij update
+  if (url.pathname.endsWith('.html') || url.pathname === '/' || url.pathname.endsWith('app.js')) {
+    e.respondWith(
+      fetch(e.request)
+        .then(res => {
+          if (res && res.status === 200) {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+          }
+          return res;
+        })
+        .catch(() => caches.match(e.request))
+    );
+    return;
+  }
+
+  // Cache-first voor alle andere assets (CSS, PNG, fonts)
   e.respondWith(
     caches.match(e.request).then(cached => {
       if (cached) return cached;
-      return fetch(e.request).then(response => {
-        if (!response || response.status !== 200 || response.type === 'opaque') return response;
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(e.request, clone));
-        return response;
+      return fetch(e.request).then(res => {
+        if (!res || res.status !== 200 || res.type === 'opaque') return res;
+        const clone = res.clone();
+        caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+        return res;
       }).catch(() => caches.match('./index.html'));
     })
   );
