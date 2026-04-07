@@ -311,13 +311,18 @@
     <div class="modal-handle"></div>
     <div class="modal-title" id="meal-modal-title">Eetmoment</div>
     <div id="meal-nutrition-advice"></div>
-    <div style="display:flex;gap:4px;margin-bottom:12px;overflow-x:auto;">
-      <button id="meal-tabBtn-preset" class="btn btn-amber btn-sm meal-tab-btn active-tab" style="flex:1;min-width:55px;font-size:13px" onclick="mealTab('preset')">🍽️ Menu's</button>
-      <button id="meal-tabBtn-menu"   class="btn btn-ghost  btn-sm meal-tab-btn"            style="flex:1;min-width:55px;font-size:13px" onclick="mealTab('menu')">🔧 Bouw</button>
-      <button id="meal-tabBtn-custom" class="btn btn-ghost  btn-sm meal-tab-btn"            style="flex:1;min-width:55px;font-size:13px" onclick="mealTab('custom')">✏️ Vrij</button>
-      <button id="meal-tabBtn-saved"  class="btn btn-ghost  btn-sm meal-tab-btn"            style="flex:1;min-width:55px;font-size:13px" onclick="mealTab('saved');renderSavedMeals()">⭐</button>
+    <div style="display:flex;gap:3px;margin-bottom:12px;overflow-x:auto;">
+      <button id="meal-tabBtn-suggest" class="btn btn-green  btn-sm meal-tab-btn active-tab" style="flex:1;min-width:50px;font-size:11px;padding:8px 4px" onclick="mealTab('suggest')">🧠 Coach</button>
+      <button id="meal-tabBtn-preset"  class="btn btn-ghost  btn-sm meal-tab-btn"            style="flex:1;min-width:50px;font-size:11px;padding:8px 4px" onclick="mealTab('preset')">🍽️ Menu</button>
+      <button id="meal-tabBtn-menu"    class="btn btn-ghost  btn-sm meal-tab-btn"            style="flex:1;min-width:50px;font-size:11px;padding:8px 4px" onclick="mealTab('menu')">🔧 Bouw</button>
+      <button id="meal-tabBtn-custom"  class="btn btn-ghost  btn-sm meal-tab-btn"            style="flex:1;min-width:50px;font-size:11px;padding:8px 4px" onclick="mealTab('custom')">✏️ Vrij</button>
+      <button id="meal-tabBtn-saved"   class="btn btn-ghost  btn-sm meal-tab-btn"            style="flex:1;min-width:50px;font-size:11px;padding:8px 4px" onclick="mealTab('saved');renderSavedMeals()">⭐</button>
     </div>
-    <div id="meal-tab-preset"></div>
+    <!-- Coach tab — slimme suggesties op basis van wat je al gegeten hebt vandaag -->
+    <div id="meal-tab-suggest">
+      <div style="color:var(--steel);font-size:13px;padding:8px 0">Coach laadt adviezen...</div>
+    </div>
+    <div id="meal-tab-preset" style="display:none;"></div>
     <div id="meal-tab-menu" style="display:none;">
       <div style="font-size:12px;color:var(--steel);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;">Stel je maaltijd samen</div>
       <div style="display:flex;gap:6px;margin-bottom:8px;">
@@ -401,6 +406,12 @@
   </div>
 </div>
 
+<style>
+  .meal-slot.past-meal { border-left:3px solid var(--red-hot); opacity:0.9; }
+  .meal-slot.past-meal .meal-time { color:var(--red-hot); }
+  .meal-slot { cursor:pointer; transition:background 0.1s, transform 0.1s; }
+  .meal-slot:active { background:rgba(230,126,34,0.12) !important; transform:scale(0.98); }
+</style>
 <div id="toast-container"></div>
 <script src="https://cdn.jsdelivr.net/npm/dexie@3.2.4/dist/dexie.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>

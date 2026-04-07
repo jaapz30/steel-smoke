@@ -1,5 +1,5 @@
 'use strict';
-// BUILD: 20260407-1900 — v5 ULTRA coach — bump to force reload
+// BUILD: 20260407-2100 — v5 ULTRA coach — bump to force reload
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
@@ -302,6 +302,11 @@ async function init() {
   state.customFoods   = await db.customFoods.toArray();
   // Merge custom foods into FOODS array
   FOODS = [...FOODS_BUILTIN, ...state.customFoods.map(f => ({...f, id:'custom_'+f.id}))];
+  // Laad food frequency voor zelflerend systeem
+  const ffRec = await db.settings.get('foodFrequency');
+  state.foodFrequency = ffRec?.value || {};
+  // Laad daglog cache voor synchrone adviezen
+  await refreshFoodCache();
   if (!state.profile?.weight) { showSetup(); } else { hideSetup(); initApp(); }
   startClockTick();
   renderFoodMatrix('food-matrix-setup', true);
@@ -395,7 +400,7 @@ function showScreen(name) {
   document.querySelector(`[data-screen="${name}"]`)?.classList.add('active');
   state.currentScreen=name;
   if(name==='dashboard') updateDashboard();
-  if(name==='food')      renderMealSlots();
+  if(name==='food')      { refreshFoodCache().then(() => renderMealSlots()); }
   if(name==='smoke')     updateSmokeScreen();
   if(name==='report')    renderReport(state.activePeriod);
   if(name==='training')  { renderRecentTrainings(); renderDailyAdvice(); }
@@ -453,9 +458,23 @@ function updateDashSmoke() {
 function updateNextMeal() {
   const el=document.getElementById('dash-next-meal');if(!el||!state.mealSchedule.length)return;
   const now=new Date(),nowMin=now.getHours()*60+now.getMinutes();
-  const next=state.mealSchedule.find(t=>{const[h,m]=t.split(':').map(Number);return h*60+m>nowMin;});
-  if(next){const[h,m]=next.split(':').map(Number);el.innerHTML=`<strong style="color:var(--amber);font-family:var(--font-mono)">${next}</strong> — over ${h*60+m-nowMin} minuten`;}
-  else el.textContent='Geen eetmomenten meer vandaag!';
+  let nextIdx=-1,nextTime=null;
+  state.mealSchedule.forEach((t,i)=>{const[h,m]=t.split(':').map(Number);if(h*60+m>nowMin&&nextIdx===-1){nextIdx=i;nextTime=t;}});
+  if(nextTime!==null){
+    const[h,m]=nextTime.split(':').map(Number);
+    const mins=h*60+m-nowMin;
+    const adv=getMealNutritionAdvice(nextIdx);
+    const names=['Ontbijt','Tussendoor','Lunch','Tussendoor','Avondeten','Snack'];
+    el.innerHTML=`<div style="cursor:pointer;" onclick="showScreen('food');openMealModal(${nextIdx})">
+      <div style="margin-bottom:4px"><strong style="color:var(--amber);font-family:var(--font-mono)">${nextTime}</strong>
+      <span style="color:var(--steel);font-size:13px"> — over ${mins} min — ${names[nextIdx]}</span></div>
+      <div style="font-size:12px;color:var(--steel-light);line-height:1.4">${adv.suggestions?.[0]?.food||adv.suggestion?.food||'—'}</div>
+      <div style="font-size:11px;color:var(--steel);font-family:var(--font-mono);margin-top:2px">${adv.mealKcal} kcal · ${adv.mealProtein}g eiwit doel</div>
+      <div style="font-size:11px;color:var(--amber);margin-top:2px">👆 Tik om te loggen</div>
+    </div>`;
+  } else {
+    el.textContent='Geen eetmomenten meer vandaag!';
+  }
 }
 
 // ── BEWEEGVOORTGANG BALK ──────────────────────────────────────
@@ -704,74 +723,194 @@ async function deleteTraining(id){
 function closeTodayDetail(){document.getElementById('today-detail-overlay').classList.remove('active');}
 
 // ══════════════════════════════════════════════════════════
-//  VOEDINGSADVIES PER MAALTIJD
+//  SLIMME VOEDINGSCOACH — echte intelligentie
+//  Berekent per eetmoment wat er nog nodig is die dag
+//  en past de suggesties aan op basis van tekorten
 // ══════════════════════════════════════════════════════════
-function getMealNutritionAdvice(mealIndex) {
-  // Bereken persoonlijk daaldoel op basis van profiel
+
+// Dagdoelen op basis van profiel (gecached per sessie)
+function getDailyTargets() {
   const bmr = computeBMR();
   const w = state.profile?.weight || 115;
-  // Eiwitdoel: 1.6g per kg lichaamsgewicht
-  const proteinGoal = Math.round(w * 1.6);
-  // Vetdoel: 25% van totale kcal
-  const fatGoal = Math.round(bmr * 0.25 / 9);
-  // Koolhydraten: rest
-  const carbGoal = Math.round((bmr - proteinGoal*4 - fatGoal*9) / 4);
+  const proteinGoal = Math.round(w * 1.6);       // 1.6g eiwit per kg
+  const fatGoal     = Math.round(bmr * 0.25 / 9); // 25% kcal uit vet
+  const carbGoal    = Math.round((bmr - proteinGoal*4 - fatGoal*9) / 4);
+  return { kcal: bmr, protein: proteinGoal, fat: fatGoal, carbs: carbGoal };
+}
 
-  // Verdeel over 6 maaltijden (ontbijt/lunch/avond groter, tussendoor kleiner)
-  const distribution = [0.20, 0.10, 0.25, 0.10, 0.25, 0.10]; // percentages per maaltijd
-  const f = distribution[mealIndex];
+// Synchrone versie voor gebruik in renderMealSlots (cache van vandaag)
+let _todayFoodCache = { log: [], date: '' };
 
-  const mealKcal    = Math.round(bmr * f);
-  const mealProtein = Math.round(proteinGoal * f);
-  const mealFat     = Math.round(fatGoal * f);
-  const mealCarbs   = Math.round(carbGoal * f);
-
-  // Stel concrete voedingsmiddelen voor
+function getMealNutritionAdvice(mealIndex) {
+  const targets = getDailyTargets();
   const mealNames = ['Ontbijt','Tussendoor','Lunch','Tussendoor','Avondeten','Snack'];
-  const suggestions = {
+
+  // Gebruik gecachede daglog (wordt async ververst door refreshFoodCache)
+  const today = new Date().toISOString().split('T')[0];
+  const log = _todayFoodCache.date === today ? _todayFoodCache.log : [];
+
+  // Wat is er al gegeten voor dit eetmoment?
+  const alreadyEaten = log.filter(e => e.mealIndex < mealIndex);
+  const eatenKcal    = alreadyEaten.reduce((s,e) => s + (e.kcal||0), 0);
+  const eatenProtein = alreadyEaten.reduce((s,e) => s + (e.protein||0), 0);
+  const eatenFat     = alreadyEaten.reduce((s,e) => s + (e.fat||0), 0);
+  const eatenCarbs   = alreadyEaten.reduce((s,e) => s + (e.carbs||0), 0);
+
+  // Hoeveel maaltijden zijn er nog (inclusief deze)?
+  const mealsLeft = 6 - mealIndex;
+
+  // Verdeel het resterende doel gelijkmatig over de rest
+  // met weging: hoofdmaaltijden (0,2,4) krijgen meer dan tussendoor (1,3,5)
+  const weights     = [2.0, 0.8, 2.2, 0.8, 2.2, 0.8];
+  const weightSlice = weights[mealIndex];
+  const totalWeightLeft = weights.slice(mealIndex).reduce((s,w) => s+w, 0);
+  const fraction = totalWeightLeft > 0 ? weightSlice / totalWeightLeft : 1/mealsLeft;
+
+  const remainKcal    = Math.max(0, targets.kcal    - eatenKcal);
+  const remainProtein = Math.max(0, targets.protein  - eatenProtein);
+  const remainFat     = Math.max(0, targets.fat      - eatenFat);
+  const remainCarbs   = Math.max(0, targets.carbs    - eatenCarbs);
+
+  const mealKcal    = Math.round(remainKcal    * fraction);
+  const mealProtein = Math.round(remainProtein * fraction);
+  const mealFat     = Math.round(remainFat     * fraction);
+  const mealCarbs   = Math.round(remainCarbs   * fraction);
+
+  // ── SLIMME SUGGESTIES ────────────────────────────────────────
+  // Kies suggesties die het grootste tekort aanvullen
+  // Sorteervolgorde: eiwit-tekort > kcal-tekort > vet-tekort
+
+  // Pool van alle bekende maaltijden (uitbreidbaar met eigen producten)
+  const allMealOptions = _buildMealOptionPool(mealIndex, targets, eatenKcal, eatenProtein, eatenFat, eatenCarbs);
+
+  // Score elke optie op basis van hoe goed het de tekorten aanvult
+  const scored = allMealOptions.map(opt => {
+    let score = 0;
+    // Beloon eiwit (hoog prioriteit bij 115kg / spierbehoud)
+    if (remainProtein > 10) score += Math.min(opt.protein, remainProtein) * 3;
+    // Beloon kcal in juiste range (niet te veel, niet te weinig)
+    const kcalDiff = Math.abs(opt.kcal - mealKcal);
+    score += Math.max(0, 100 - kcalDiff) * 0.5;
+    // Bonus voor eigen producten die je eerder hebt gelogd (zelflerend!)
+    const freq = state.foodFrequency?.[opt.id] || 0;
+    score += freq * 5;
+    // Bonus voor producten in je voorkeuren
+    if (state.foodPreferences?.includes(opt.id)) score += 10;
+    return { ...opt, score };
+  });
+
+  // Sorteer op score, pak de top 4
+  scored.sort((a, b) => b.score - a.score);
+  const suggestions = scored.slice(0, 4);
+
+  // Als nog geen data: gebruik statische fallback
+  const fallback = _getStaticSuggestions(mealIndex);
+  const finalSuggestions = suggestions.length >= 2 ? suggestions : fallback;
+
+  // De top suggestie is de aanbeveling
+  const day = new Date().getDay();
+  const suggestion = finalSuggestions[day % finalSuggestions.length] || finalSuggestions[0];
+
+  return {
+    mealKcal, mealProtein, mealFat, mealCarbs,
+    suggestion,
+    suggestions: finalSuggestions,
+    mealName: mealNames[mealIndex],
+    remainKcal, remainProtein, remainFat, remainCarbs,
+    eatenKcal, eatenProtein
+  };
+}
+
+// Bouw een pool van maaltijdopties op basis van FOODS + eigen producten
+function _buildMealOptionPool(mealIndex, targets, eatenKcal, eatenProtein, eatenFat, eatenCarbs) {
+  const allFoods = FOODS || [];
+  const pool = [];
+
+  // Voeg FOODS toe als enkelvoudige producten (met typische portiegrootte)
+  allFoods.forEach(food => {
+    // Schat een realistische portie per eetmoment
+    const portions = {
+      'snee': 3, 'plak': 2, 'el': 2, 'stuk': 1,
+      '100g': 1.5, '100ml': 2, 'port': 1, 'blik': 1, 'shaker': 1
+    };
+    const qty = portions[food.unit] || 1;
+    pool.push({
+      id: food.id,
+      food: `${food.emoji} ${food.name} (${qty}× ${food.unit})`,
+      kcal: Math.round(food.kcal * qty),
+      protein: Math.round(food.protein * qty),
+      carbs: Math.round(food.carbs * qty),
+      fat: Math.round(food.fat * qty),
+    });
+  });
+
+  // Voeg samengestelde maaltijden toe (statisch per categorie)
+  const combined = _getCombinedMeals(mealIndex);
+  combined.forEach(m => pool.push(m));
+
+  // Filter op redelijke kcal range voor dit eetmoment (± 60%)
+  const bmr = targets.kcal;
+  const distribution = [0.20, 0.10, 0.25, 0.10, 0.25, 0.10];
+  const targetKcal = bmr * distribution[mealIndex];
+  return pool.filter(opt => opt.kcal > 40 && opt.kcal < targetKcal * 2.5);
+}
+
+// Statische samengestelde maaltijden per categorie
+function _getCombinedMeals(mealIndex) {
+  const all = {
     0: [ // Ontbijt
-      {food:'🍞 3× volkoren brood + 2× kaas + boter', kcal:425, protein:22, carbs:48, fat:16},
-      {food:'🌾 Havermout (60g) + banaan + magere kwark', kcal:390, protein:22, carbs:62, fat:5},
-      {food:'🍳 Roerei (2 ei) + 2× volkoren + groenten', kcal:345, protein:18, carbs:30, fat:15},
-      {food:'🥣 Griekse yoghurt (200g) + fruit + honing', kcal:270, protein:20, carbs:36, fat:10},
+      {id:'combo_ob1', food:'🍞 3× volkoren + 2× kaas + boter', kcal:425, protein:22, carbs:48, fat:16},
+      {id:'combo_ob2', food:'🌾 Havermout (60g) + banaan + kwark', kcal:390, protein:22, carbs:62, fat:5},
+      {id:'combo_ob3', food:'🍳 Roerei (2 ei) + 2× volkoren', kcal:345, protein:18, carbs:30, fat:15},
+      {id:'combo_ob4', food:'🥣 Griekse yoghurt (200g) + fruit', kcal:270, protein:20, carbs:36, fat:10},
+      {id:'combo_ob5', food:'🍞 2× volkoren + pindakaas + banaan', kcal:380, protein:12, carbs:52, fat:16},
     ],
     1: [ // Tussendoor ochtend
-      {food:'🍎 Appel + 20g noten', kcal:172, protein:4, carbs:23, fat:9},
-      {food:'🥛 150g magere kwark + kiwi', kcal:148, protein:17, carbs:14, fat:1},
-      {food:'🍌 Banaan', kcal:89, protein:1, carbs:23, fat:0},
-      {food:'🥤 Proteïneshake', kcal:130, protein:25, carbs:5, fat:2},
+      {id:'combo_td1', food:'🍎 Appel + 20g noten', kcal:172, protein:4, carbs:23, fat:9},
+      {id:'combo_td2', food:'🥛 150g magere kwark + kiwi', kcal:148, protein:17, carbs:14, fat:1},
+      {id:'combo_td3', food:'🍌 Banaan + kwark (100g)', kcal:146, protein:11, carbs:27, fat:0},
+      {id:'combo_td4', food:'🥤 Proteïneshake', kcal:130, protein:25, carbs:5, fat:2},
     ],
     2: [ // Lunch
-      {food:'🍞 3× volkoren + tonijn + salade', kcal:420, protein:35, carbs:44, fat:9},
-      {food:'🥗 Salade: kip (150g) + groenten + olijfolie', kcal:380, protein:38, carbs:15, fat:18},
-      {food:'🍞 2× volkoren + ei (2×) + tomaat', kcal:320, protein:20, carbs:30, fat:12},
-      {food:'🥣 Soep + 2× volkoren brood', kcal:350, protein:15, carbs:45, fat:10},
+      {id:'combo_lu1', food:'🍞 3× volkoren + tonijn + salade', kcal:420, protein:35, carbs:44, fat:9},
+      {id:'combo_lu2', food:'🍗 Kip (150g) + groenten + olijfolie', kcal:380, protein:38, carbs:15, fat:18},
+      {id:'combo_lu3', food:'🍞 2× volkoren + 2 eieren + tomaat', kcal:320, protein:20, carbs:30, fat:12},
+      {id:'combo_lu4', food:'🥗 Grote salade + ei + volkoren', kcal:350, protein:18, carbs:32, fat:14},
+      {id:'combo_lu5', food:'🐠 Tonijn + 2× volkoren + komkommer', kcal:380, protein:35, carbs:32, fat:8},
     ],
     3: [ // Tussendoor middag
-      {food:'🧀 Cottage cheese (100g) + komkommer', kcal:118, protein:12, carbs:5, fat:5},
-      {food:'🥜 Pindakaas op 1× volkoren', kcal:180, protein:6, carbs:17, fat:10},
-      {food:'🍊 Sinaasappel + handje noten', kcal:152, protein:4, carbs:22, fat:7},
-      {food:'🥤 Proteïneshake', kcal:130, protein:25, carbs:5, fat:2},
+      {id:'combo_tm1', food:'🧀 Cottage cheese (100g) + groenten', kcal:118, protein:12, carbs:5, fat:5},
+      {id:'combo_tm2', food:'🥜 1× volkoren + pindakaas', kcal:180, protein:6, carbs:17, fat:10},
+      {id:'combo_tm3', food:'🍊 Sinaasappel + handje noten', kcal:152, protein:4, carbs:22, fat:7},
+      {id:'combo_tm4', food:'🥤 Proteïneshake', kcal:130, protein:25, carbs:5, fat:2},
     ],
     4: [ // Avondeten
-      {food:'🍗 150g kip + 150g rijst + 200g broccoli', kcal:445, protein:53, carbs:46, fat:7},
-      {food:'🐟 150g zalm + aardappelen + groenten', kcal:520, protein:36, carbs:44, fat:20},
-      {food:'🥩 150g mager rund + rijst + spinazie', kcal:480, protein:42, carbs:38, fat:14},
-      {food:'🫘 Witte bonen (200g) + kip + groenten', kcal:420, protein:45, carbs:38, fat:8},
+      {id:'combo_av1', food:'🍗 Kip (150g) + rijst + broccoli', kcal:445, protein:53, carbs:46, fat:7},
+      {id:'combo_av2', food:'🐟 Zalm (150g) + aardappelen + groenten', kcal:520, protein:36, carbs:44, fat:20},
+      {id:'combo_av3', food:'🥩 Rund (150g) + rijst + spinazie', kcal:480, protein:42, carbs:38, fat:14},
+      {id:'combo_av4', food:'🫘 Witte bonen (200g) + kip + groenten', kcal:420, protein:45, carbs:38, fat:8},
+      {id:'combo_av5', food:'🍳 Omelet (3 ei) + groenten + volkoren', kcal:380, protein:28, carbs:20, fat:20},
     ],
     5: [ // Avondsnack
-      {food:'🥛 200g magere kwark', kcal:114, protein:20, carbs:8, fat:0},
-      {food:'🍎 Appel of peer', kcal:75, protein:0.5, carbs:19, fat:0},
-      {food:'🥣 Griekse yoghurt (150g) + kiwi', kcal:193, protein:15, carbs:22, fat:7},
-      {food:'🧀 Cottage cheese (100g)', kcal:103, protein:11, carbs:3, fat:5},
+      {id:'combo_sn1', food:'🥛 200g magere kwark', kcal:114, protein:20, carbs:8, fat:0},
+      {id:'combo_sn2', food:'🍎 Appel of peer', kcal:75, protein:1, carbs:19, fat:0},
+      {id:'combo_sn3', food:'🥣 Griekse yoghurt (150g) + kiwi', kcal:193, protein:15, carbs:22, fat:7},
+      {id:'combo_sn4', food:'🧀 Cottage cheese (100g)', kcal:103, protein:11, carbs:3, fat:5},
     ],
   };
+  return all[mealIndex] || all[0];
+}
 
-  const day = new Date().getDay();
-  const suggList = suggestions[mealIndex] || suggestions[0];
-  const suggestion = suggList[(day + mealIndex) % suggList.length];
+// Fallback statische suggesties
+function _getStaticSuggestions(mealIndex) {
+  return _getCombinedMeals(mealIndex);
+}
 
-  return { mealKcal, mealProtein, mealFat, mealCarbs, suggestion, mealName:mealNames[mealIndex] };
+// Ververs de foodlog cache async — wordt aangeroepen na elke opslag
+async function refreshFoodCache() {
+  const today = new Date().toISOString().split('T')[0];
+  const log = await db.foodLog.where('date').equals(today).toArray();
+  _todayFoodCache = { log, date: today };
 }
 
 // ══════════════════════════════════════════════════════════
@@ -800,7 +939,9 @@ function updateBreakfastTime(){
 }
 async function renderMealSlots(){
   const container=document.getElementById('meal-slots-container');if(!container)return;
-  const todayLog=await getTodayFoodLog();
+  // Ververs cache zodat adviezen kloppen
+  await refreshFoodCache();
+  const todayLog=_todayFoodCache.log;
   const now=new Date(),nowMin=now.getHours()*60+now.getMinutes();
   const names=['Ontbijt','Tussendoor','Lunch','Tussendoor','Avondeten','Snack'];
   let html='';
@@ -808,14 +949,38 @@ async function renderMealSlots(){
     const[h,m]=time.split(':').map(Number),mealMin=h*60+m;
     const done=todayLog.find(e=>e.mealIndex===i);
     const isNow=Math.abs(mealMin-nowMin)<30&&!done;
-    const cls=done?'done':isNow?'active-now':'';
-    const check=done?'✅':isNow?'🔔':'○';
+    const isFuture=mealMin>nowMin+30&&!done;
+    const isPast=mealMin<nowMin-30&&!done;
+
+    // Altijd klikbaar — ook toekomstige en gemiste momenten
+    let cls=done?'done':isNow?'active-now':isPast?'past-meal':'';
+    let check=done?'✅':isNow?'🔔':isPast?'⚠️':'○';
+
     const adv=getMealNutritionAdvice(i);
-    const label=done?done.food:adv.suggestion?.food||'—';
-    const kcalLbl=done?done.kcal+' kcal':adv.mealKcal+' kcal doel';
-    html+=`<div class="meal-slot ${cls}" onclick="openMealModal(${i})">
-      <div class="meal-time">${time}</div>
-      <div style="flex:1"><div class="meal-name">${names[i]}</div><div class="meal-kcal">${label}</div><div style="font-size:10px;color:var(--steel);font-family:var(--font-mono)">${kcalLbl}</div></div>
+    let label, kcalLbl, sublabel='';
+
+    if(done){
+      label=done.food;
+      kcalLbl=done.kcal+' kcal gegeten';
+    } else if(isPast){
+      label='Niet gelogd — klik om alsnog in te voeren';
+      kcalLbl=adv.mealKcal+' kcal doel';
+    } else {
+      // Toon slimste suggestie
+      const topSugg=adv.suggestions?.[0];
+      label=topSugg?topSugg.food:'—';
+      kcalLbl=adv.mealKcal+' kcal doel · '+adv.mealProtein+'g eiwit';
+      if(adv.remainProtein>20) sublabel='⚠️ Nog '+Math.round(adv.remainProtein)+'g eiwit nodig vandaag';
+    }
+
+    html+=`<div class="meal-slot ${cls}" onclick="openMealModal(${i})" style="cursor:pointer;">
+      <div class="meal-time" style="${isPast&&!done?'color:var(--red-hot)':''}">${time}</div>
+      <div style="flex:1">
+        <div class="meal-name">${names[i]}${isFuture?' <span style="font-size:10px;color:var(--steel)">(gepland)</span>':''}</div>
+        <div class="meal-kcal" style="font-size:12px;line-height:1.4;">${label}</div>
+        <div style="font-size:10px;color:var(--steel);font-family:var(--font-mono)">${kcalLbl}</div>
+        ${sublabel?`<div style="font-size:10px;color:var(--amber);margin-top:2px">${sublabel}</div>`:''}
+      </div>
       <div class="meal-check">${check}</div>
     </div>`;
   });
@@ -823,27 +988,141 @@ async function renderMealSlots(){
   updateFoodTotals();
 }
 
-// ── MEAL MODAL MET VOEDINGSADVIES ─────────────────────────────
+// ── MEAL MODAL MET SLIMME VOEDINGSADVIES ─────────────────────
 function openMealModal(i){
   state.currentMealIndex=i;state.menuItems=[];
   const adv=getMealNutritionAdvice(i);
-  document.getElementById('meal-modal-title').textContent=`${adv.mealName} — ${state.mealSchedule[i]}`;
-  // Toon voedingsadvies banner
+  const names=['Ontbijt','Tussendoor','Lunch','Tussendoor','Avondeten','Snack'];
+  document.getElementById('meal-modal-title').textContent=`${names[i]} — ${state.mealSchedule[i]}`;
+
+  // Toon slimme voedingsadvies banner met tekorten van vandaag
   const banner=document.getElementById('meal-nutrition-advice');
   if(banner){
+    const kcalPct = adv.eatenKcal > 0 ? Math.round(adv.eatenKcal / getDailyTargets().kcal * 100) : 0;
+    const proteinStatus = adv.remainProtein > 20
+      ? `⚠️ Nog ${Math.round(adv.remainProtein)}g eiwit nodig!`
+      : adv.remainProtein > 0
+      ? `${Math.round(adv.remainProtein)}g eiwit nog nodig`
+      : '✅ Eiwit doel gehaald';
+    const kcalStatus = adv.remainKcal > 0
+      ? `Nog ${adv.remainKcal} kcal ruimte vandaag`
+      : `Let op: caloriedoel bereikt!`;
+
     banner.innerHTML=`<div style="background:rgba(39,174,96,0.1);border-left:3px solid var(--green);padding:10px 12px;border-radius:2px;margin-bottom:12px;">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--green-bright);margin-bottom:4px;">💡 Doel voor dit eetmoment</div>
-      <div style="font-family:var(--font-mono);font-size:13px;color:var(--white)">${adv.mealKcal} kcal · ${adv.mealProtein}g eiwit · ${adv.mealCarbs}g koolh · ${adv.mealFat}g vet</div>
-      <div style="font-size:12px;color:var(--green-bright);margin-top:6px;font-style:italic">Aanbevolen: ${adv.suggestion?.food||'—'}</div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--green-bright);margin-bottom:6px;">🧠 Coach — Wat heb jij nu nodig?</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;">
+        <div style="background:rgba(0,0,0,0.2);border-radius:3px;padding:6px;text-align:center;">
+          <div style="font-family:var(--font-mono);font-size:16px;color:var(--amber)">${adv.mealKcal}</div>
+          <div style="font-size:10px;color:var(--steel)">kcal doel nu</div>
+        </div>
+        <div style="background:rgba(0,0,0,0.2);border-radius:3px;padding:6px;text-align:center;">
+          <div style="font-family:var(--font-mono);font-size:16px;color:var(--amber)">${adv.mealProtein}g</div>
+          <div style="font-size:10px;color:var(--steel)">eiwit doel nu</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--green-bright);margin-bottom:3px;">${proteinStatus}</div>
+      <div style="font-size:12px;color:var(--steel)">${kcalStatus} · Al gegeten: ${adv.eatenKcal} kcal</div>
     </div>`;
   }
-  mealTab('preset');
-  renderPresetMenus();
+
+  // Render slimme suggesties (gesorteerd op score)
+  renderSmartSuggestions(i, adv);
+  mealTab('suggest');
   document.getElementById('meal-modal').classList.add('active');
 }
 
+// ── SLIMME SUGGESTIES RENDEREN ────────────────────────────────
+function renderSmartSuggestions(mealIndex, adv) {
+  const c = document.getElementById('meal-tab-suggest');
+  if (!c) return;
+
+  const suggestions = adv.suggestions || _getCombinedMeals(mealIndex);
+  const allFoods = FOODS || [];
+
+  // Eigen producten die je eerder hebt gelogd — bovenaan
+  const frequentFoods = allFoods
+    .filter(f => (state.foodFrequency[f.id] || 0) > 0)
+    .sort((a,b) => (state.foodFrequency[b.id]||0) - (state.foodFrequency[a.id]||0))
+    .slice(0, 3);
+
+  let html = '';
+
+  // Toon eigen veelgebruikte producten bovenaan
+  if (frequentFoods.length > 0) {
+    html += '<div style="font-size:11px;color:var(--amber);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">⭐ Jouw meest gekozen producten</div>';
+    frequentFoods.forEach(food => {
+      const portions = {'snee':3,'plak':2,'el':2,'stuk':1,'100g':1.5,'100ml':2,'port':1,'blik':1,'shaker':1};
+      const qty = portions[food.unit] || 1;
+      const kcal = Math.round(food.kcal * qty);
+      const protein = Math.round(food.protein * qty);
+      const freq = state.foodFrequency[food.id] || 0;
+      html += `<div class="meal-preset-card" onclick="quickLogFood('${food.id}',${qty})" style="border-left:3px solid var(--amber);margin-bottom:6px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:22px">${food.emoji}</span>
+          <div style="flex:1">
+            <div style="font-weight:700;font-size:14px">${food.name} <span style="font-size:11px;color:var(--amber)">(${freq}× gebruikt)</span></div>
+            <div style="font-size:11px;color:var(--steel)">${qty}× ${food.unit} · ${kcal} kcal · ${protein}g eiwit</div>
+          </div>
+          <div style="text-align:right;min-width:50px">
+            <div style="font-family:var(--font-mono);font-size:16px;color:var(--amber)">${kcal}</div>
+            <div style="font-size:9px;color:var(--steel)">kcal</div>
+          </div>
+        </div>
+      </div>`;
+    });
+    html += '<div style="height:4px"></div>';
+  }
+
+  // Coach-gesorteerde suggesties
+  html += '<div style="font-size:11px;color:var(--green-bright);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">🧠 Coach aanbevelingen</div>';
+  suggestions.slice(0, 5).forEach((s, idx) => {
+    const isTop = idx === 0;
+    html += `<div class="meal-preset-card" onclick="quickLogCombo('${s.id || 'combo'}','${(s.food||'').replace(/'/g,'')}',${s.kcal},${s.protein||0},${s.carbs||0},${s.fat||0})" style="${isTop ? 'border-left:3px solid var(--green-bright);' : ''}margin-bottom:6px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:20px">${isTop ? '🥇' : '  '}</span>
+        <div style="flex:1">
+          <div style="font-weight:700;font-size:13px">${s.food}</div>
+          <div style="font-size:11px;color:var(--steel)">${s.protein||0}g eiwit · ${s.carbs||0}g koolh · ${s.fat||0}g vet</div>
+        </div>
+        <div style="text-align:right;min-width:50px">
+          <div style="font-family:var(--font-mono);font-size:16px;color:var(--amber)">${s.kcal}</div>
+          <div style="font-size:9px;color:var(--steel)">kcal</div>
+        </div>
+      </div>
+    </div>`;
+  });
+
+  html += '<button class="btn btn-green mt-8" style="width:100%" onclick="confirmSuggestLog()">✅ Geselecteerde optie loggen</button>';
+  c.innerHTML = html;
+  state._selectedSuggest = null;
+}
+
+// Directe log van een FOODS-product
+async function quickLogFood(foodId, qty) {
+  const food = FOODS.find(f => f.id === foodId);
+  if (!food) return;
+  const kcal = Math.round(food.kcal * qty);
+  const protein = Math.round(food.protein * qty);
+  const carbs = Math.round(food.carbs * qty);
+  const fat = Math.round(food.fat * qty);
+  const desc = `${food.emoji} ${food.name} (${qty}× ${food.unit})`;
+  await saveMealEntry(state.currentMealIndex, desc, kcal, protein, carbs, fat);
+}
+
+// Directe log van een combo suggestie
+async function quickLogCombo(id, food, kcal, protein, carbs, fat) {
+  // Markeer als geselecteerd en log meteen
+  document.querySelectorAll('.meal-preset-card').forEach(el => {
+    el.style.borderColor = 'var(--border)';
+    el.style.background = 'var(--card)';
+  });
+  // Slight feedback
+  vibrate(15);
+  await saveMealEntry(state.currentMealIndex, food, kcal, protein, carbs, fat);
+}
+
 function mealTab(tab){
-  ['preset','menu','custom','saved'].forEach(t=>{const el=document.getElementById('meal-tab-'+t);if(el)el.style.display=t===tab?'block':'none';});
+  ['suggest','preset','menu','custom','saved'].forEach(t=>{const el=document.getElementById('meal-tab-'+t);if(el)el.style.display=t===tab?'block':'none';});
   document.querySelectorAll('.meal-tab-btn').forEach(b=>b.classList.remove('active-tab'));
   document.getElementById('meal-tabBtn-'+tab)?.classList.add('active-tab');
 }
@@ -987,6 +1266,7 @@ async function markMealDoneCustom(){
     }
     renderFoodMatrix('food-matrix-main', false);
     populateMenuProductSelect();
+    await refreshFoodCache();
     toast('✅ Product opgeslagen in Mijn Producten!', 'success');
   }
 
@@ -999,6 +1279,21 @@ async function markMealDoneCustom(){
 async function saveMealEntry(mealIndex,food,kcal,protein,carbs,fat){
   const now=new Date();
   await db.foodLog.add({date:now.toISOString().split('T')[0],logTime:now.toISOString(),mealIndex,time:state.mealSchedule[mealIndex],food,kcal,protein:Math.round(protein||0),carbs:Math.round(carbs||0),fat:Math.round(fat||0)});
+
+  // Zelflerend: bijhouden welke producten/maaltijden je kiest
+  if (food) {
+    const foodKey = food.trim().toLowerCase().substring(0,40);
+    if (!state.foodFrequency) state.foodFrequency = {};
+    state.foodFrequency[foodKey] = (state.foodFrequency[foodKey] || 0) + 1;
+    // Ook FOODS-id tracken als het een bekend product is
+    const matchedFood = FOODS.find(f => food.includes(f.name));
+    if (matchedFood) state.foodFrequency[matchedFood.id] = (state.foodFrequency[matchedFood.id]||0) + 1;
+    await db.settings.put({key:'foodFrequency', value:state.foodFrequency});
+  }
+
+  // Ververs de daglog cache zodat het volgende advies meteen klopt
+  await refreshFoodCache();
+
   closeModal('meal-modal');selectedPresetId=null;
   toast('✅ Opgeslagen!','success');vibrate([50,20,50]);
   showScreen('dashboard');
