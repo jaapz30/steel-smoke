@@ -1,5 +1,5 @@
 'use strict';
-// BUILD: 20260407-2200 — v7 smart coach, hydration, GPS maps — bump to force reload
+// BUILD: 20260407-2230 — v7.1 notif action fix — bump to force reload
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
@@ -356,7 +356,10 @@ async function logDrink(drinkId) {
   await db.settings.put({key:'drinkLog_'+today, value:log});
   toast('💧 '+drink.label+' gelogd!', 'success');
   vibrate([20,10,20]);
-  updateDashboardNotifications();
+  // Herlaad meldingen + modal als open
+  await updateDashboardNotifications();
+  const modal = document.getElementById('drink-modal');
+  if (modal && modal.classList.contains('active')) renderDrinkModal();
 }
 
 async function getTodayDrinkLog() {
@@ -410,6 +413,21 @@ async function renderDrinkModal() {
 }
 
 // ── DASHBOARD NOTIFICATIECENTRUM ──────────────────────────────
+// Actiesysteem: elke knop roept notifAction(id) aan,
+// die de actie uitvoert EN daarna de meldingen herlaadt.
+const _notifActions = {};
+
+async function notifAction(id) {
+  const fn = _notifActions[id];
+  if (!fn) return;
+  // Visuele feedback: knop grijs maken
+  const btn = document.getElementById('notif-btn-' + id);
+  if (btn) { btn.disabled = true; btn.textContent = '✓ Gedaan'; btn.style.opacity = '0.5'; }
+  try { await fn(); } catch(e) { console.error('notifAction error', e); }
+  // Meldingen herladen na actie
+  await updateDashboardNotifications();
+}
+
 async function updateDashboardNotifications() {
   const c = document.getElementById('dash-notifications');
   if (!c) return;
@@ -418,80 +436,125 @@ async function updateDashboardNotifications() {
   const h = now.getHours();
   const today = now.toISOString().split('T')[0];
 
-  // Verzamel data
+  // Verzamel data parallel
   const [foodLog, trainings, drinkMl] = await Promise.all([
     getTodayFoodLog(),
     db.trainings.where('date').startsWith(today).toArray(),
     getTodayHydrationMl(),
   ]);
 
-  const targets = getDailyTargets ? getDailyTargets() : {kcal:computeBMR(), protein:Math.round((state.profile?.weight||115)*1.6)};
-  const eatenKcal = foodLog.reduce((s,e)=>s+(e.kcal||0),0);
-  const eatenProtein = foodLog.reduce((s,e)=>s+(e.protein||0),0);
-  const movedMin = Math.round(trainings.reduce((s,t)=>s+(t.duration||0),0)/60);
-  const remaining = Math.max(0, DAILY_MOVE_GOAL_MIN - movedMin);
-  const proteinLeft = Math.max(0, targets.protein - eatenProtein);
-  const hydrationPct = Math.min(100, Math.round(drinkMl/DRINK_GOAL_ML*100));
+  const targets = typeof getDailyTargets === 'function'
+    ? getDailyTargets()
+    : {kcal: computeBMR(), protein: Math.round((state.profile?.weight||115)*1.6)};
+
+  const eatenKcal    = foodLog.reduce((s,e) => s+(e.kcal||0), 0);
+  const eatenProtein = foodLog.reduce((s,e) => s+(e.protein||0), 0);
+  const movedMin     = Math.round(trainings.reduce((s,t) => s+(t.duration||0), 0) / 60);
+  const remaining    = Math.max(0, DAILY_MOVE_GOAL_MIN - movedMin);
+  const proteinLeft  = Math.max(0, targets.protein - eatenProtein);
+  const hydrationPct = Math.min(100, Math.round(drinkMl / DRINK_GOAL_ML * 100));
+
+  // Reset actietabel
+  Object.keys(_notifActions).forEach(k => delete _notifActions[k]);
 
   const notifications = [];
+  let nid = 0; // unieke notificatie-ID per render
 
-  // ── Drinkadviezen ──────────────────────────────────────────
+  // Helper: voeg melding toe met inline actie-functie
+  function addNotif(icon, color, priority, text, actionLabel, actionFn) {
+    const id = 'n' + (nid++);
+    if (actionFn) _notifActions[id] = actionFn;
+    notifications.push({id, icon, color, priority, text, actionLabel: actionFn ? actionLabel : null});
+  }
+
+  // ── DRINKEN ────────────────────────────────────────────────
   if (h >= 6 && h < 10 && drinkMl < 200) {
-    notifications.push({icon:'💧', color:'var(--steel)', priority:3,
-      text:'Ochtend: drink nu een glas water of thee', action:'logDrink("water")', actionLabel:'Log water'});
+    addNotif('💧', 'var(--steel-light)', 3,
+      'Ochtend: drink nu een glas water of thee.',
+      'Log water', () => logDrink('water'));
   }
   if (h >= 10 && h < 22 && hydrationPct < 30) {
-    notifications.push({icon:'💧', color:'var(--red-hot)', priority:1,
-      text:'Je drinkt te weinig! Nog '+(DRINK_GOAL_ML-drinkMl)+'ml nodig vandaag', action:'showDrinkModal()', actionLabel:'Log drank'});
+    addNotif('💧', 'var(--red-hot)', 1,
+      'Te weinig gedronken! Nog ' + (DRINK_GOAL_ML - drinkMl) + 'ml nodig vandaag.',
+      'Log water', () => logDrink('water'));
   }
   if (h >= 12 && h < 14 && drinkMl < 500) {
-    notifications.push({icon:'🫖', color:'var(--amber)', priority:2,
-      text:'Middagtip: neem nu water of thee bij je lunch', action:'logDrink("water")', actionLabel:'Log water'});
+    addNotif('🫖', 'var(--amber)', 2,
+      'Middagtip: neem water of thee bij je lunch.',
+      'Log thee', () => logDrink('thee'));
+  }
+  if (h >= 15 && h < 17 && drinkMl < 1000) {
+    addNotif('💧', 'var(--amber)', 3,
+      'Middag check: je drinkt nog te weinig. Pak een fles water.',
+      'Log water (groot)', () => logDrink('water_groot'));
   }
   if (hydrationPct >= 100) {
-    notifications.push({icon:'✅', color:'var(--green-bright)', priority:5, text:'Drinkdoel gehaald! '+(drinkMl)+'ml vandaag.'});
+    addNotif('✅', 'var(--green-bright)', 6, 'Drinkdoel gehaald! ' + drinkMl + 'ml vandaag. Goed bezig!', null, null);
   }
 
-  // ── Eetadviezen ────────────────────────────────────────────
-  if (proteinLeft > 30 && h >= 12) {
-    notifications.push({icon:'💪', color:'var(--amber)', priority:2,
-      text:'Eiwitachterstand: nog '+Math.round(proteinLeft)+'g nodig. Kies eiwit-rijke maaltijd', action:'showScreen("food")', actionLabel:'Naar eten'});
-  }
+  // ── ETEN ───────────────────────────────────────────────────
   if (eatenKcal === 0 && h >= 9) {
-    notifications.push({icon:'🍽️', color:'var(--red-hot)', priority:1,
-      text:'Je hebt nog niets gegeten vandaag! Ontbijt niet overslaan.', action:'showScreen("food")', actionLabel:'Loggen'});
+    addNotif('🍽️', 'var(--red-hot)', 1,
+      'Je hebt nog niets gegeten vandaag. Ontbijt is belangrijk!',
+      'Naar eten', () => { showScreen('food'); });
+  }
+  if (proteinLeft > 30 && h >= 12 && eatenKcal > 0) {
+    addNotif('💪', 'var(--amber)', 2,
+      'Eiwit tekort: nog ' + Math.round(proteinLeft) + 'g nodig. Kies een eiwitrijke maaltijd.',
+      'Naar eten', () => { showScreen('food'); });
+  }
+  if (eatenKcal > 0 && eatenKcal < 400 && h >= 13) {
+    addNotif('⚠️', 'var(--amber)', 2,
+      'Je hebt vandaag maar ' + eatenKcal + ' kcal gegeten. Lunch niet overslaan!',
+      'Maaltijd loggen', () => { showScreen('food'); });
   }
 
-  // ── Beweegadviezen ─────────────────────────────────────────
-  if (remaining > 0 && h >= 7 && h < 7 && state.settings.gymReminderEnabled) {
-    notifications.push({icon:'🏋️', color:'var(--red-hot)', priority:1,
-      text:'Sportschoolmoment! Voor 07:00 trainen — nu vertrekken!', action:'showScreen("training")', actionLabel:'Start training'});
+  // ── BEWEGEN ────────────────────────────────────────────────
+  if (h >= 5 && h < 7 && state.settings.gymReminderEnabled && remaining > 0) {
+    addNotif('🏋️', 'var(--red-hot)', 1,
+      'Sportschoolmoment! Vertrek nu — voor 07:00 trainen!',
+      'Naar training', () => { showScreen('training'); });
   }
   if (remaining > 20 && h >= 19 && h < 22) {
     const actId = remaining > 30 ? 'wandelen_stevig' : 'wandelen_rustig';
-    const act = GPS_ACTIVITIES.find(a=>a.id===actId);
-    notifications.push({icon:'🚶', color:'var(--amber)', priority:2,
-      text:'Nog '+remaining+' min beweging nodig. Nu '+act.name+' om dagdoel te halen!', action:'showScreen("training")', actionLabel:'Start'});
+    const act = GPS_ACTIVITIES.find(a => a.id === actId);
+    addNotif('🚶', 'var(--amber)', 2,
+      'Nog ' + remaining + ' min bewegen nodig. Ga nu ' + act.name + '!',
+      'Naar training', () => { showScreen('training'); });
+  }
+  if (remaining > 0 && h >= 8 && h < 12 && movedMin === 0) {
+    addNotif('🚶', 'var(--steel-light)', 4,
+      'Je hebt vandaag nog niet bewogen. Een korte ochtendwandeling doet wonderen.',
+      'Naar training', () => { showScreen('training'); });
   }
   if (remaining <= 0) {
-    notifications.push({icon:'✅', color:'var(--green-bright)', priority:5, text:'Beweegdoel gehaald! Geweldig!'});
+    addNotif('✅', 'var(--green-bright)', 6, 'Beweegdoel gehaald! Geweldig gedaan!', null, null);
   }
 
-  // Sorteer op prioriteit (laag getal = hoogste prio)
-  notifications.sort((a,b) => a.priority - b.priority);
+  // Sorteer: laag getal = hoogste prioriteit, dan toon max 3
+  notifications.sort((a, b) => a.priority - b.priority);
+  const shown = notifications.slice(0, 3);
 
-  if (notifications.length === 0) {
-    c.innerHTML = '<div style="color:var(--steel);font-size:13px;padding:8px 0">Alles op schema — goed bezig!</div>';
+  if (shown.length === 0) {
+    c.innerHTML = '<div style="color:var(--steel);font-size:13px;padding:6px 0">Alles loopt goed — goed bezig!</div>';
     return;
   }
 
-  // Toon max 3 meldingen
-  const shown = notifications.slice(0, 3);
   c.innerHTML = shown.map(n => {
-    const btn = n.action ? `<button onclick="${n.action}" style="background:rgba(255,255,255,0.1);border:none;color:var(--white);padding:4px 10px;border-radius:3px;font-size:11px;cursor:pointer;margin-top:4px;">${n.actionLabel}</button>` : '';
-    return `<div style="display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">
-      <span style="font-size:18px;margin-top:1px">${n.icon}</span>
-      <div style="flex:1"><div style="font-size:13px;color:${n.color};line-height:1.4">${n.text}</div>${btn}</div>
+    const btn = n.actionLabel
+      ? `<button id="notif-btn-${n.id}" onclick="notifAction('${n.id}')"
+           style="background:rgba(255,255,255,0.12);border:none;color:var(--white);
+                  padding:5px 12px;border-radius:4px;font-size:12px;cursor:pointer;
+                  margin-top:6px;font-weight:600;active:opacity(0.7)">
+           ${n.actionLabel}
+         </button>`
+      : '';
+    return `<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+      <span style="font-size:20px;flex-shrink:0;margin-top:1px">${n.icon}</span>
+      <div style="flex:1">
+        <div style="font-size:13px;color:${n.color};line-height:1.5">${n.text}</div>
+        ${btn}
+      </div>
     </div>`;
   }).join('');
 }
