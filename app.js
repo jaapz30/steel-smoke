@@ -1,5 +1,5 @@
 'use strict';
-// BUILD: 20260408-0900 — v8: meal planning, weight fix, PWA install — v7.1 notif action fix — bump to force reload
+// BUILD: 20260408-0910 — v8.1: setup food matrix fix — v7.1 notif action fix — bump to force reload
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
@@ -584,6 +584,7 @@ async function init() {
   await refreshFoodCache();
   if (!state.profile?.weight) { showSetup(); } else { hideSetup(); initApp(); }
   startClockTick();
+  // Called here too as fallback (setupStep3 also calls it when user navigates there)
   renderFoodMatrix('food-matrix-setup', true);
 }
 
@@ -640,6 +641,8 @@ function setupStep3() {
   state.profile.cigPackPrice=parseFloat(document.getElementById('setup-cig-price').value)||9.50;
   state.mealSchedule=computeMealSchedule(state.profile.breakfastTime);
   showSetupStep(3);
+  // FIX: render food matrix when arriving at step 3
+  renderFoodMatrix('food-matrix-setup', true);
 }
 async function finishSetup() {
   state.profile.setupDate=new Date().toISOString();
