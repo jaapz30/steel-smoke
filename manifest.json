@@ -1,14 +1,15 @@
 {
   "name": "Steel & Smoke",
   "short_name": "Steel&Smoke",
-  "description": "Jouw militaire trainer voor gewicht, conditie en rookvrij leven",
-  "start_url": "./index.html",
+  "description": "Jouw militaire health coach voor gewicht, conditie en rookvrij leven",
+  "start_url": "./index.html?pwa=1",
   "scope": "./",
-  "display": "fullscreen",
-  "orientation": "portrait",
+  "display": "standalone",
+  "orientation": "portrait-primary",
   "background_color": "#0a0a0a",
   "theme_color": "#c0392b",
   "lang": "nl",
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "icons/icon-192.png",
@@ -35,5 +36,6 @@
       "purpose": "maskable"
     }
   ],
-  "categories": ["health", "fitness"]
+  "categories": ["health", "fitness"],
+  "screenshots": []
 }

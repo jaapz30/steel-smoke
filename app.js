@@ -1,5 +1,5 @@
 'use strict';
-// BUILD: 20260407-2100 — v5 ULTRA coach — bump to force reload
+// BUILD: 20260407-2200 — v7 smart coach, hydration, GPS maps — bump to force reload
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
@@ -69,22 +69,47 @@ const PRESET_MENUS = [
   {id:'griekseyo_fruit', emoji:'🥣🍓', name:'Griekse yoghurt met fruit', kcal:270, protein:20, carbs:36, fat:10, items:'200g yoghurt + kiwi + banaan + honing'},
 ];
 
-// ── SPORTADVIES POOL (14 wisselende adviezen) ────────────────
+// ── SPORTADVIES BIBLIOTHEEK (groot, slim, gevarieerd) ────────
+// type: 'wandelen'|'ebike'|'gym'|'overig'
+// tijdvak: 'ochtend'|'middag'|'avond'|'altijd'
+// intensiteit: 1=laag, 2=middel, 3=hoog
 const SPORT_ADVICE_POOL = [
-  {time:'20:00', emoji:'🏃', activity:'Avondloop 3 km',        desc:'Loop 3 km in jouw wijk. Start rustig, bouw op. Looproute: huis → park → huis.', duration:'~25 min', kcal:210},
-  {time:'07:00', emoji:'🚶', activity:'Ochtendwandeling 30 min',desc:'30 min stevig doorwandelen voor het ontbijt. Vetverbranding op zijn best — nuchter bewegen.', duration:'30 min', kcal:130},
-  {time:'19:30', emoji:'🚴', activity:'Fietstocht 12 km',      desc:'45 min fietsen, minimaal 12 km. Kies een rustige route. Fietsen spaart je knieën.', duration:'45 min', kcal:280},
-  {time:'20:30', emoji:'💪', activity:'Krachtcircuit thuis',   desc:'3× 15 squats, 3× 10 push-ups, 3× 20 sec plank. Rust 60 sec tussen sets.', duration:'20 min', kcal:150},
-  {time:'19:00', emoji:'🏊', activity:'Zwemmen 30 min',        desc:'30 min baantjes. Water draagt 90% van je gewicht — ideale sport bij overgewicht.', duration:'30 min', kcal:260},
-  {time:'12:30', emoji:'🚶', activity:'Lunchpauze wandeling',  desc:'20 min wandelen tijdens de lunch. Na het eten wandelen verlaagt bloedsuiker met 30%.', duration:'20 min', kcal:87},
-  {time:'21:00', emoji:'🧘', activity:'Stretchsessie 15 min',  desc:'15 min rekken en strekken. Goed voor herstel en soepelheid. Gebruik YouTube "stretch routine".', duration:'15 min', kcal:45},
-  {time:'08:00', emoji:'🪜', activity:'Trap challenge',         desc:'10× de trap op en neer, 3× vandaag. Trap lopen verbrandt 3× meer kcal dan de lift.', duration:'15 min', kcal:95},
-  {time:'19:00', emoji:'🚶', activity:'Avondwandeling 5 km',   desc:'Rustige avondwandeling van 5 km. Neem koptelefoon mee — 5 km = ~350 kcal verbrand.', duration:'55 min', kcal:215},
-  {time:'20:00', emoji:'🚶', activity:'Stevig wandelen 5 km',    desc:'45 min stevig doorwandelen. Goed tempo, armen mee laten bewegen. Minimaal 5 km afleggen.', duration:'45 min', kcal:190},
-  {time:'18:30', emoji:'🛵', activity:'E-bike tocht 1 uur',    desc:'1 uur e-biken, trap zoveel mogelijk mee. Kies een heuvelachtige route voor meer effect.', duration:'60 min', kcal:180},
-  {time:'19:30', emoji:'💪', activity:'Dumbbell circuit',       desc:'Bicep curl, shoulder press, deadlift. 3 sets × 12 herhalingen. Rust 90 sec tussen sets.', duration:'35 min', kcal:175},
-  {time:'07:00', emoji:'🚶', activity:'Ochtendwandeling 30 min', desc:'30 min stevig doorwandelen voor het ontbijt. Nuchter bewegen = vetverbranding op zijn best.', duration:'30 min', kcal:120},
-  {time:'20:00', emoji:'🚶', activity:'10.000 stappen doel',    desc:'Zorg dat je vandaag 10.000 stappen haalt. Controleer je gezondheids-app — nog X stappen te gaan!', duration:'heel dag', kcal:350},
+  // WANDELEN RUSTIG
+  {time:'07:00', emoji:'🚶', activity:'10 min rustig wandelen',       desc:'Korte ochtenddip? 10 minuten rustig wandelen activeer je stofwisseling zonder moe te worden.', duration:'10 min', kcal:46,  type:'wandelen', tijdvak:'ochtend', intensiteit:1, gps:'wandelen_rustig'},
+  {time:'12:30', emoji:'🚶', activity:'15 min rustig wandelen',       desc:'Lunch op en even de benen strekken. 15 minuten rustig wandelen verlaagt je bloedsuiker.', duration:'15 min', kcal:69,  type:'wandelen', tijdvak:'middag',  intensiteit:1, gps:'wandelen_rustig'},
+  {time:'20:30', emoji:'🚶', activity:'15 min avondwandeling',        desc:'Kalme avondwandeling. Helpt je spijsvertering en bereidt je voor op een goede nachtrust.', duration:'15 min', kcal:69,  type:'wandelen', tijdvak:'avond',   intensiteit:1, gps:'wandelen_rustig'},
+  {time:'21:00', emoji:'🚶', activity:'10 min herstelwandeling',      desc:'Actief herstel: 10 minuten rustig bewegen na een actieve dag. Minder spierpijn morgen.', duration:'10 min', kcal:46,  type:'wandelen', tijdvak:'avond',   intensiteit:1, gps:'wandelen_rustig'},
+  {time:'15:00', emoji:'🚶', activity:'20 min middag wandeling',      desc:'Namiddagdip? Pak de benen. 20 minuten wandelen geeft meer energie dan koffie.', duration:'20 min', kcal:92,  type:'wandelen', tijdvak:'middag',  intensiteit:1, gps:'wandelen_rustig'},
+  // WANDELEN STEVIG
+  {time:'07:00', emoji:'🚶', activity:'20 min stevig wandelen',       desc:'Nuchter bewegen verbrand vet uit de reserves. Stevig tempo — armen actief meenemen.', duration:'20 min', kcal:126, type:'wandelen', tijdvak:'ochtend', intensiteit:2, gps:'wandelen_stevig'},
+  {time:'07:30', emoji:'🚶', activity:'30 min stevig wandelen',       desc:'30 minuten stevig voor het ontbijt. Ideale vetverbranding, goed humeur de rest van de dag.', duration:'30 min', kcal:190, type:'wandelen', tijdvak:'ochtend', intensiteit:2, gps:'wandelen_stevig'},
+  {time:'12:30', emoji:'🚶', activity:'25 min lunchpauze stevig',     desc:'Gebruik je lunchpauze slim. 25 min stevig wandelen = dag goed op weg. Geen excuses!', duration:'25 min', kcal:158, type:'wandelen', tijdvak:'middag',  intensiteit:2, gps:'wandelen_stevig'},
+  {time:'18:00', emoji:'🚶', activity:'30 min avond stevig wandelen', desc:'Werkdag klaar — nu bewegen. 30 min stevig wandelen, goed tempo aanhouden.', duration:'30 min', kcal:190, type:'wandelen', tijdvak:'avond',   intensiteit:2, gps:'wandelen_stevig'},
+  {time:'19:00', emoji:'🚶', activity:'45 min stevig wandelen',       desc:'Langere avondwandeling. Pak 4-5 km. Buiten zijn verlaagt cortisol en verbetert slaap.', duration:'45 min', kcal:285, type:'wandelen', tijdvak:'avond',   intensiteit:2, gps:'wandelen_stevig'},
+  {time:'20:00', emoji:'🚶', activity:'Avondwandeling dagdoel',       desc:'Je beweegbalk is nog niet vol. Stevig wandelen om het dagdoel af te maken. Nu gaan!', duration:'30 min', kcal:190, type:'wandelen', tijdvak:'avond',   intensiteit:2, gps:'wandelen_stevig'},
+  {time:'17:30', emoji:'🚶', activity:'Wandeling na werk 40 min',     desc:'Direct na het werk wandelen — voordat je op de bank zakt. 40 minuten, goed tempo.', duration:'40 min', kcal:253, type:'wandelen', tijdvak:'avond',   intensiteit:2, gps:'wandelen_stevig'},
+  // E-BIKE TURBO (minst intensief)
+  {time:'15:00', emoji:'⚡', activity:'15 min e-bike turbo',          desc:'Korte turbo-rit. Lekker rijden met volledige ondersteuning. Goed voor je humeur.', duration:'15 min', kcal:52,  type:'ebike', tijdvak:'middag',  intensiteit:1, gps:'ebike_turbo'},
+  {time:'19:00', emoji:'⚡', activity:'20 min e-bike turbo avond',    desc:'Avondlucht pakken op de e-bike in turbo. Rustige rit, geen inspanning, wel buiten zijn.', duration:'20 min', kcal:70,  type:'ebike', tijdvak:'avond',   intensiteit:1, gps:'ebike_turbo'},
+  // E-BIKE SPORT (middel)
+  {time:'17:00', emoji:'⚡', activity:'25 min e-bike sport',          desc:'Na het werk: e-bike sport stand. Matige ondersteuning, goed voor conditie.', duration:'25 min', kcal:111, type:'ebike', tijdvak:'avond',   intensiteit:2, gps:'ebike_sport'},
+  {time:'19:30', emoji:'⚡', activity:'30 min e-bike sport avond',    desc:'30 min e-bike sport. Trap actief mee — je voelt het verschil met turbo.', duration:'30 min', kcal:133, type:'ebike', tijdvak:'avond',   intensiteit:2, gps:'ebike_sport'},
+  {time:'12:00', emoji:'⚡', activity:'20 min e-bike sport middag',   desc:'Middaglunch op e-bike sport halen. Functioneel én actief.', duration:'20 min', kcal:89,  type:'ebike', tijdvak:'middag',  intensiteit:2, gps:'ebike_sport'},
+  // E-BIKE TOUR (intensief)
+  {time:'18:00', emoji:'⚡', activity:'30 min e-bike tour',           desc:'30 min op tour-stand. Minder hulp, meer eigen kracht. Goed voor conditieopbouw.', duration:'30 min', kcal:158, type:'ebike', tijdvak:'avond',   intensiteit:3, gps:'ebike_tour'},
+  {time:'09:00', emoji:'⚡', activity:'40 min e-bike tour ochtend',   desc:'Langere ochtendrit op tour-stand. Genieten én werken aan conditie.', duration:'40 min', kcal:211, type:'ebike', tijdvak:'ochtend', intensiteit:3, gps:'ebike_tour'},
+  {time:'19:00', emoji:'⚡', activity:'45 min e-bike tour avond',     desc:'Avondrit op tour-stand. Minimale hulp, maximaal effect. Pak een route van ~15 km.', duration:'45 min', kcal:237, type:'ebike', tijdvak:'avond',   intensiteit:3, gps:'ebike_tour'},
+  // E-BIKE ECO (meest intensief)
+  {time:'08:00', emoji:'⚡', activity:'30 min e-bike eco intensief',  desc:'Eco = jij doet het werk. Bijna geen motorhulp. Echte training op de e-bike.', duration:'30 min', kcal:193, type:'ebike', tijdvak:'ochtend', intensiteit:4, gps:'ebike_eco'},
+  {time:'18:30', emoji:'⚡', activity:'40 min e-bike eco avond',      desc:'40 min eco-stand. Hoog trapritme, minimale hulp. Vergelijkbaar met gewoon fietsen.', duration:'40 min', kcal:257, type:'ebike', tijdvak:'avond',   intensiteit:4, gps:'ebike_eco'},
+  // GYM (alleen voor 07:00)
+  {time:'06:00', emoji:'🏋️', activity:'Ochtend sportschool 45 min', desc:'Voor 07:00 in de sportschool. Krachttraining nuchter verbrand extra vet. Focus op borst+rug.', duration:'45 min', kcal:275, type:'gym',     tijdvak:'ochtend', intensiteit:3, gps:null},
+  {time:'06:15', emoji:'🏋️', activity:'Sportschool 40 min kracht',  desc:'Gewichten voor 07:00. 3 sets per oefening. Compound movements: deadlift, squat, bench.', duration:'40 min', kcal:245, type:'gym',     tijdvak:'ochtend', intensiteit:3, gps:null},
+  {time:'06:30', emoji:'🏋️', activity:'Gym sessie voor 07:00',      desc:'Ochtend gym moment. Korte maar effectieve sessie. Daarna ontbijt thuis.', duration:'35 min', kcal:213, type:'gym',     tijdvak:'ochtend', intensiteit:3, gps:null},
+  // OVERIG
+  {time:'12:30', emoji:'🪜', activity:'Trap challenge middag',        desc:'3× 10 keer de trap op en neer. Doet me goed voor hart en benen. Trap spaart de lift.', duration:'12 min', kcal:90,  type:'overig',  tijdvak:'middag',  intensiteit:2, gps:null},
+  {time:'20:00', emoji:'🧘', activity:'Stretchsessie 15 min',         desc:'15 min stretchen voor slaap. Rug, hamstrings, heupen. Vermindert spierpijn en stress.', duration:'15 min', kcal:30,  type:'overig',  tijdvak:'avond',   intensiteit:1, gps:null},
+  {time:'19:30', emoji:'🏊', activity:'Zwemmen 30 min',               desc:'30 min baantjes. Water ondersteunt je gewicht — ideale sport bij overgewicht. Heerlijk.', duration:'30 min', kcal:220, type:'overig',  tijdvak:'avond',   intensiteit:2, gps:null},
 ];
 
 // ── VASTE SPORTSCHOOL REMINDER ────────────────────────────────
@@ -101,13 +126,13 @@ const GYM_ACTIVITIES = [
 ];
 
 const GPS_ACTIVITIES = [
-  {id:'wandelen_rustig',  emoji:'🚶', name:'Wandelen rustig',   met:2.8, kcalPer30min:98,  doel:'ontspanning'},
-  {id:'wandelen_stevig',  emoji:'🚶', name:'Wandelen stevig',   met:3.8, kcalPer30min:133, doel:'conditie'},
-  {id:'ebike_eco',        emoji:'⚡', name:'E-bike eco',        met:4.5, kcalPer30min:158, doel:'actief'},
-  {id:'ebike_tour',       emoji:'⚡', name:'E-bike tour',       met:4.0, kcalPer30min:140, doel:'uitje'},
-  {id:'ebike_sport',      emoji:'⚡', name:'E-bike sport',      met:5.5, kcalPer30min:193, doel:'intensief'},
-  {id:'ebike_turbo',      emoji:'⚡', name:'E-bike turbo',      met:3.5, kcalPer30min:123, doel:'ontspannen'},
-  {id:'scooter',          emoji:'🛵', name:'Scooter',           met:2.5, kcalPer30min:88,  doel:'vervoer'},
+  {id:'wandelen_rustig',  emoji:'🚶', name:'Wandelen rustig',   met:2.8, kcalPer30min:98,  intensiteit:1, doel:'Ontspanning & herstel'},
+  {id:'wandelen_stevig',  emoji:'🚶', name:'Wandelen stevig',   met:3.8, kcalPer30min:133, intensiteit:2, doel:'Conditie & vetverbranding'},
+  {id:'ebike_turbo',      emoji:'⚡', name:'E-bike turbo',      met:3.0, kcalPer30min:105, intensiteit:1, doel:'Ontspannen, veel ondersteuning'},
+  {id:'ebike_sport',      emoji:'⚡', name:'E-bike sport',      met:3.8, kcalPer30min:133, intensiteit:2, doel:'Actief, matige ondersteuning'},
+  {id:'ebike_tour',       emoji:'⚡', name:'E-bike tour',       met:4.5, kcalPer30min:158, intensiteit:3, doel:'Intensief, weinig ondersteuning'},
+  {id:'ebike_eco',        emoji:'⚡', name:'E-bike eco',        met:5.5, kcalPer30min:193, intensiteit:4, doel:'Maximaal, bijna geen ondersteuning'},
+  {id:'scooter',          emoji:'🛵', name:'Scooter',           met:2.0, kcalPer30min:70,  intensiteit:0, doel:'Vervoer'},
 ];
 
 const HEALTH_MILESTONES = [
@@ -165,80 +190,105 @@ function getActivityMinutesForGoal(activityId, remainingMinutes) {
   };
 }
 
-// Bepaal het volgende beste sportmoment op basis van:
-// - huidig tijdstip
-// - hoeveel minuten al bewogen
-// - jouw regels (geen hardlopen, gym voor 7u)
+// ═══════════════════════════════════════════════════════════════
+//  SLIMME COACH ENGINE v2 — met zelflerend sportadvies
+// ═══════════════════════════════════════════════════════════════
+
+// Kies het beste advies uit de pool, rekening houdend met:
+// 1. Tijdvak (ochtend/middag/avond)
+// 2. Hoeveel minuten resterend voor dagdoel
+// 3. Wat je eerder die dag al gedaan hebt (zelflerend)
+// 4. Welke adviezen je vaker kiest (activiteit voorkeur)
 async function computeNextSportMoment() {
   const now = new Date();
   const h = now.getHours();
-  const m = now.getMinutes();
   const today = now.toISOString().split('T')[0];
   const trainings = await db.trainings.where('date').startsWith(today).toArray();
-  const totalMovedMin = Math.round(trainings.reduce((s, t) => s + (t.duration || 0), 0) / 60);
+  const totalMovedMin = Math.round(trainings.reduce((s,t) => s+(t.duration||0),0)/60);
   const remaining = Math.max(0, DAILY_MOVE_GOAL_MIN - totalMovedMin);
 
   if (remaining <= 0) {
-    return { done: true, msg: '✅ Daaldoel bereikt! Goed gedaan!', next: null };
+    return {done:true, msg:'✅ Daaldoel bereikt! Goed gedaan!', next:null};
   }
 
-  let activity, timeLabel, reason;
+  // Bepaal tijdvak
+  const tijdvak = h < 7 ? 'ochtend' : h < 12 ? 'ochtend' : h < 17 ? 'middag' : 'avond';
 
-  // Voor 07:00 — sportschool optie
-  if (h < COACH_RULES.gymBeforeHour) {
-    activity = { id:'gewichten', name:'Sportschool', emoji:'🏋️', minutes: 45 };
-    timeLabel = 'Nu (' + String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ')';
-    reason = 'Voor 07:00 — sportschool is nu de ideale keuze';
-  }
-  // Overdag (7-12) — ochtendwandeling
-  else if (h < 12) {
-    const actId = 'wandelen_stevig';
-    const act = GPS_ACTIVITIES.find(a => a.id === actId);
-    activity = { id: actId, name: act.name, emoji: act.emoji, minutes: Math.min(45, remaining + 5) };
-    timeLabel = 'Nu';
-    reason = 'Ochtend is het beste moment voor vetverbranding';
-  }
-  // Middag (12-17) — kort wandelen
-  else if (h < 17) {
-    const actId = h < 14 ? 'wandelen_rustig' : 'ebike_tour';
-    const act = GPS_ACTIVITIES.find(a => a.id === actId);
-    activity = { id: actId, name: act.name, emoji: act.emoji, minutes: Math.min(30, remaining + 5) };
-    timeLabel = h === 12 ? '12:30' : h < 14 ? '13:00' : '16:00';
-    reason = remaining > 20 ? 'Goed moment voor een middagactiviteit' : 'Korte sessie om doel te halen';
-  }
-  // Avond (17-21) — e-bike of wandelen
-  else if (h < 21) {
-    const preferEvening = h < 19 ? 'ebike_sport' : 'wandelen_stevig';
-    const act = GPS_ACTIVITIES.find(a => a.id === preferEvening);
-    const suggestTime = h < 19 ? '18:30' : h < 20 ? '19:30' : '20:00';
-    activity = { id: preferEvening, name: act.name, emoji: act.emoji, minutes: Math.min(60, remaining + 10) };
-    timeLabel = suggestTime;
-    reason = remaining > 15 ? 'Avond ideaal voor e-bike of stevig wandelen' : 'Nog ' + remaining + ' min nodig voor je dagdoel';
-  }
-  // Laat avond (21+) — rustig wandelen of niets
-  else {
-    if (remaining <= 15) {
-      const act = GPS_ACTIVITIES.find(a => a.id === 'wandelen_rustig');
-      activity = { id: 'wandelen_rustig', name: act.name, emoji: act.emoji, minutes: remaining };
-      timeLabel = 'Nu';
-      reason = 'Nog ' + remaining + ' min — rustig avondwandelingetje';
-    } else {
+  // Gym ALLEEN voor 07:00
+  if (h < 7) {
+    const gymAdv = SPORT_ADVICE_POOL.find(a => a.type === 'gym');
+    if (gymAdv) {
       return {
-        done: false,
-        msg: '😴 Te laat voor intensief sporten. Morgen vroeg beginnen!',
-        next: null,
+        done:false,
+        next:{id:'gewichten', name:'Sportschool', emoji:'🏋️', minutes:gymAdv.duration.replace(' min','').trim()},
+        timeLabel:'Nu (voor 07:00)',
+        reason:'Sportschool moment — de enige tijd dat jij traint',
         remaining,
+        msg:'🏋️ Sportschool — nu gaan voor 07:00!',
+        advice: gymAdv,
       };
     }
   }
 
+  // Filter pool op tijdvak
+  let pool = SPORT_ADVICE_POOL.filter(a => {
+    if (a.type === 'gym') return false; // gym alleen voor 07:00
+    if (a.tijdvak !== tijdvak && a.tijdvak !== 'altijd') return false;
+    return true;
+  });
+
+  // Als niets beschikbaar: gebruik alle niet-gym adviezen
+  if (pool.length === 0) pool = SPORT_ADVICE_POOL.filter(a => a.type !== 'gym');
+
+  // Zelflerend: laad activiteitsfrequentie
+  const actFreqRec = await db.settings.get('activityFrequency');
+  const actFreq = actFreqRec?.value || {};
+
+  // Scoor elk advies
+  const scored = pool.map(adv => {
+    let score = 50;
+
+    // Bonus voor adviezen die passen bij hoeveel er nog nodig is
+    const advMin = parseInt(adv.duration) || 20;
+    const kcalAdvies = adv.kcal || 100;
+    if (remaining <= 15 && advMin <= 20) score += 30; // kleine activiteit past
+    if (remaining >= 30 && advMin >= 30) score += 20; // grotere activiteit past
+    if (Math.abs(advMin - remaining) < 10) score += 15; // duur matcht goed
+
+    // Bonus voor favoriete activiteiten (zelflerend)
+    if (adv.gps && actFreq[adv.gps]) score += actFreq[adv.gps] * 8;
+    if (actFreq[adv.type]) score += actFreq[adv.type] * 5;
+
+    // Variatie: malus voor te veel wandelen als e-bike ook optie is
+    const todayTypes = trainings.map(t => t.type || 'gym');
+    if (todayTypes.includes('wandelen') && adv.type === 'wandelen') score -= 10;
+    if (!todayTypes.includes('ebike') && adv.type === 'ebike') score += 10;
+
+    // Kleine random variatie (1-20) voor afwisseling
+    score += (parseInt(adv.activity.charCodeAt(3) || 7) % 20) + 1;
+
+    return {...adv, score, advMin};
+  });
+
+  scored.sort((a,b) => b.score - a.score);
+  const best = scored[0];
+
+  const gpsAct = best.gps ? GPS_ACTIVITIES.find(a => a.id === best.gps) : null;
+  const activityObj = gpsAct
+    ? {id:best.gps, name:gpsAct.name, emoji:gpsAct.emoji, minutes:best.advMin, met:gpsAct.met}
+    : {id:best.type, name:best.activity, emoji:best.emoji, minutes:best.advMin, met:3.5};
+
+  const kcalEst = Math.round((activityObj.met||3.5)*(state.profile?.weight||115)*(best.advMin/60)*1.05);
+
   return {
-    done: false,
-    next: activity,
-    timeLabel,
-    reason,
+    done:false,
+    next:activityObj,
+    timeLabel:best.time,
+    reason:best.desc,
     remaining,
-    msg: activity.emoji + ' ' + activity.name + ' — ' + activity.minutes + ' min om ' + timeLabel,
+    kcalEst,
+    msg:best.emoji+' '+best.activity+' om '+best.time,
+    advice:best,
   };
 }
 
@@ -286,6 +336,166 @@ let state = {
   todayAdviceIndex:0,
 };
 
+// ── HYDRATIECOACH ─────────────────────────────────────────────
+const DRINK_GOAL_ML = 2000; // dagdoel vocht in ml
+const DRINKS_DB = [
+  {id:'water',  emoji:'💧', name:'Water',          ml:250, hydration:1.0, label:'250ml water'},
+  {id:'thee',   emoji:'🫖', name:'Thee',            ml:200, hydration:0.9, label:'200ml thee'},
+  {id:'koffie', emoji:'☕', name:'Koffie',          ml:150, hydration:0.6, label:'150ml koffie'},
+  {id:'water_groot', emoji:'💧', name:'Groot glas water', ml:400, hydration:1.0, label:'400ml water'},
+  {id:'water_fles',  emoji:'🍶', name:'Fles water (500ml)', ml:500, hydration:1.0, label:'500ml water'},
+];
+
+async function logDrink(drinkId) {
+  const drink = DRINKS_DB.find(d => d.id === drinkId);
+  if (!drink) return;
+  const today = new Date().toISOString().split('T')[0];
+  const existing = await db.settings.get('drinkLog_' + today);
+  const log = existing?.value || [];
+  log.push({drinkId, ml:drink.ml, hydration:drink.ml*drink.hydration, time:new Date().toISOString()});
+  await db.settings.put({key:'drinkLog_'+today, value:log});
+  toast('💧 '+drink.label+' gelogd!', 'success');
+  vibrate([20,10,20]);
+  updateDashboardNotifications();
+}
+
+async function getTodayDrinkLog() {
+  const today = new Date().toISOString().split('T')[0];
+  const rec = await db.settings.get('drinkLog_'+today);
+  return rec?.value || [];
+}
+
+async function getTodayHydrationMl() {
+  const log = await getTodayDrinkLog();
+  return Math.round(log.reduce((s,e) => s+(e.hydration||e.ml||0), 0));
+}
+
+// ── DRANK LOG MODAL ───────────────────────────────────────────
+function showDrinkModal() {
+  const modal = document.getElementById('drink-modal');
+  if (modal) {
+    renderDrinkModal();
+    modal.classList.add('active');
+  }
+}
+async function renderDrinkModal() {
+  const c = document.getElementById('drink-modal-content');
+  if (!c) return;
+  const drinkMl = await getTodayHydrationMl();
+  const pct = Math.min(100, Math.round(drinkMl/DRINK_GOAL_ML*100));
+  const log = await getTodayDrinkLog();
+  let html = `<div style="margin-bottom:12px">
+    <div class="progress-label"><span>Vochtinname vandaag</span><span>${drinkMl}/${DRINK_GOAL_ML}ml (${pct}%)</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;background:var(--steel)"></div></div>
+  </div>
+  <div style="font-size:12px;color:var(--steel);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Snel loggen:</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">`;
+  DRINKS_DB.forEach(d => {
+    html += `<button onclick="logDrink('${d.id}');renderDrinkModal();" class="btn btn-steel btn-sm" style="display:flex;align-items:center;gap:6px;justify-content:center;">
+      <span style="font-size:18px">${d.emoji}</span><span>${d.name}</span>
+    </button>`;
+  });
+  html += `</div>`;
+  if (log.length > 0) {
+    html += `<div style="font-size:12px;color:var(--steel);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Vandaag gedronken:</div>`;
+    log.slice(-5).reverse().forEach(e => {
+      const d = DRINKS_DB.find(x=>x.id===e.drinkId)||{emoji:'💧',name:e.drinkId};
+      const t = e.time ? new Date(e.time).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'}) : '';
+      html += `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px">
+        <span>${d.emoji} ${d.name}</span><span style="color:var(--steel);font-family:var(--font-mono)">${e.ml}ml · ${t}</span>
+      </div>`;
+    });
+  }
+  c.innerHTML = html;
+}
+
+// ── DASHBOARD NOTIFICATIECENTRUM ──────────────────────────────
+async function updateDashboardNotifications() {
+  const c = document.getElementById('dash-notifications');
+  if (!c) return;
+
+  const now = new Date();
+  const h = now.getHours();
+  const today = now.toISOString().split('T')[0];
+
+  // Verzamel data
+  const [foodLog, trainings, drinkMl] = await Promise.all([
+    getTodayFoodLog(),
+    db.trainings.where('date').startsWith(today).toArray(),
+    getTodayHydrationMl(),
+  ]);
+
+  const targets = getDailyTargets ? getDailyTargets() : {kcal:computeBMR(), protein:Math.round((state.profile?.weight||115)*1.6)};
+  const eatenKcal = foodLog.reduce((s,e)=>s+(e.kcal||0),0);
+  const eatenProtein = foodLog.reduce((s,e)=>s+(e.protein||0),0);
+  const movedMin = Math.round(trainings.reduce((s,t)=>s+(t.duration||0),0)/60);
+  const remaining = Math.max(0, DAILY_MOVE_GOAL_MIN - movedMin);
+  const proteinLeft = Math.max(0, targets.protein - eatenProtein);
+  const hydrationPct = Math.min(100, Math.round(drinkMl/DRINK_GOAL_ML*100));
+
+  const notifications = [];
+
+  // ── Drinkadviezen ──────────────────────────────────────────
+  if (h >= 6 && h < 10 && drinkMl < 200) {
+    notifications.push({icon:'💧', color:'var(--steel)', priority:3,
+      text:'Ochtend: drink nu een glas water of thee', action:'logDrink("water")', actionLabel:'Log water'});
+  }
+  if (h >= 10 && h < 22 && hydrationPct < 30) {
+    notifications.push({icon:'💧', color:'var(--red-hot)', priority:1,
+      text:'Je drinkt te weinig! Nog '+(DRINK_GOAL_ML-drinkMl)+'ml nodig vandaag', action:'showDrinkModal()', actionLabel:'Log drank'});
+  }
+  if (h >= 12 && h < 14 && drinkMl < 500) {
+    notifications.push({icon:'🫖', color:'var(--amber)', priority:2,
+      text:'Middagtip: neem nu water of thee bij je lunch', action:'logDrink("water")', actionLabel:'Log water'});
+  }
+  if (hydrationPct >= 100) {
+    notifications.push({icon:'✅', color:'var(--green-bright)', priority:5, text:'Drinkdoel gehaald! '+(drinkMl)+'ml vandaag.'});
+  }
+
+  // ── Eetadviezen ────────────────────────────────────────────
+  if (proteinLeft > 30 && h >= 12) {
+    notifications.push({icon:'💪', color:'var(--amber)', priority:2,
+      text:'Eiwitachterstand: nog '+Math.round(proteinLeft)+'g nodig. Kies eiwit-rijke maaltijd', action:'showScreen("food")', actionLabel:'Naar eten'});
+  }
+  if (eatenKcal === 0 && h >= 9) {
+    notifications.push({icon:'🍽️', color:'var(--red-hot)', priority:1,
+      text:'Je hebt nog niets gegeten vandaag! Ontbijt niet overslaan.', action:'showScreen("food")', actionLabel:'Loggen'});
+  }
+
+  // ── Beweegadviezen ─────────────────────────────────────────
+  if (remaining > 0 && h >= 7 && h < 7 && state.settings.gymReminderEnabled) {
+    notifications.push({icon:'🏋️', color:'var(--red-hot)', priority:1,
+      text:'Sportschoolmoment! Voor 07:00 trainen — nu vertrekken!', action:'showScreen("training")', actionLabel:'Start training'});
+  }
+  if (remaining > 20 && h >= 19 && h < 22) {
+    const actId = remaining > 30 ? 'wandelen_stevig' : 'wandelen_rustig';
+    const act = GPS_ACTIVITIES.find(a=>a.id===actId);
+    notifications.push({icon:'🚶', color:'var(--amber)', priority:2,
+      text:'Nog '+remaining+' min beweging nodig. Nu '+act.name+' om dagdoel te halen!', action:'showScreen("training")', actionLabel:'Start'});
+  }
+  if (remaining <= 0) {
+    notifications.push({icon:'✅', color:'var(--green-bright)', priority:5, text:'Beweegdoel gehaald! Geweldig!'});
+  }
+
+  // Sorteer op prioriteit (laag getal = hoogste prio)
+  notifications.sort((a,b) => a.priority - b.priority);
+
+  if (notifications.length === 0) {
+    c.innerHTML = '<div style="color:var(--steel);font-size:13px;padding:8px 0">Alles op schema — goed bezig!</div>';
+    return;
+  }
+
+  // Toon max 3 meldingen
+  const shown = notifications.slice(0, 3);
+  c.innerHTML = shown.map(n => {
+    const btn = n.action ? `<button onclick="${n.action}" style="background:rgba(255,255,255,0.1);border:none;color:var(--white);padding:4px 10px;border-radius:3px;font-size:11px;cursor:pointer;margin-top:4px;">${n.actionLabel}</button>` : '';
+    return `<div style="display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">
+      <span style="font-size:18px;margin-top:1px">${n.icon}</span>
+      <div style="flex:1"><div style="font-size:13px;color:${n.color};line-height:1.4">${n.text}</div>${btn}</div>
+    </div>`;
+  }).join('');
+}
+
 // ══════════════════════════════════════════════════════════
 //  INIT
 // ══════════════════════════════════════════════════════════
@@ -325,10 +535,13 @@ function initApp() {
   renderDailyAdvice();
   renderDashAdvice();
   renderNextSportMoment();
+  updateDashboardNotifications();
   populateMenuProductSelect();
   if (state.settings.notifications) requestNotificationPermission();
   startSmokeInterval();
   scheduleAllNotifications();
+  // Hercheck notificaties elke 5 minuten
+  setInterval(updateDashboardNotifications, 5 * 60 * 1000);
 }
 
 // ── CLOCK ────────────────────────────────────────────────────
@@ -442,6 +655,7 @@ async function updateDashboard() {
   updateMovementBar();
   renderDashAdvice();
   renderNextSportMoment();
+  updateDashboardNotifications();
   drawWeightChart();
   renderWeightTrend();
 }
@@ -498,18 +712,23 @@ async function updateMovementBar() {
   renderNextSportMoment();
 }
 
-// ── SPORT ADVIES OP DASHBOARD ──────────────────────────────────
+// ── SPORT ADVIES OP DASHBOARD (met intensiteit badge) ──────────
 function renderDashAdvice() {
   const c=document.getElementById('dash-advice-card');if(!c)return;
   const adv=SPORT_ADVICE_POOL[state.todayAdviceIndex];
+  const intensBar = adv.intensiteit ? '●'.repeat(adv.intensiteit)+'○'.repeat(4-adv.intensiteit) : '';
+  const typeLabel = {wandelen:'Wandelen',ebike:'E-bike',gym:'Gym',overig:'Overig'}[adv.type]||'';
   c.innerHTML=`<div style="display:flex;align-items:flex-start;gap:10px;">
     <span style="font-size:28px">${adv.emoji}</span>
     <div style="flex:1">
-      <div style="font-family:var(--font-display);font-size:17px;letter-spacing:1px;color:var(--red-hot)">${adv.activity}</div>
-      <div style="font-size:12px;color:var(--steel);font-family:var(--font-mono);margin:2px 0">${adv.time} · ${adv.duration} · ~${adv.kcal} kcal</div>
-      <div style="font-size:13px;color:var(--steel-light);margin-top:6px;line-height:1.5">${adv.desc}</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+        <div style="font-family:var(--font-display);font-size:15px;letter-spacing:1px;color:var(--red-hot)">${adv.activity}</div>
+        ${intensBar?`<span style="font-size:10px;color:var(--amber);letter-spacing:1px">${intensBar}</span>`:''}
+      </div>
+      <div style="font-size:11px;color:var(--steel);font-family:var(--font-mono);margin:2px 0">${adv.time} · ${adv.duration} · ~${adv.kcal} kcal · ${typeLabel}</div>
+      <div style="font-size:12px;color:var(--steel-light);margin-top:5px;line-height:1.5">${adv.desc}</div>
     </div>
-    <button onclick="nextAdvice()" style="background:var(--border);border:none;color:var(--steel-light);padding:5px 8px;border-radius:4px;font-size:11px;cursor:pointer;white-space:nowrap;">🔄 Ander</button>
+    <button onclick="nextAdvice()" style="background:var(--border);border:none;color:var(--steel-light);padding:5px 8px;border-radius:4px;font-size:11px;cursor:pointer;white-space:nowrap;">🔄</button>
   </div>`;
 }
 
@@ -1417,6 +1636,15 @@ async function stopTraining(){
   toast(`✅ ${state.activeTraining.name}: ${formatSeconds(elapsed)} · ${kcal} kcal!`,'success');
   if(state.settings.sound)speak(`Sessie complete. ${kcal} calorieën verbrand. Sterk!`);
   vibrate([50,30,50,30,50]);
+  // Zelflerend: bijhouden welke activiteiten je kiest
+  if (state.activeTraining.type === 'gps' && state.gpsActivityId) {
+    const afRec = await db.settings.get('activityFrequency');
+    const af = afRec?.value || {};
+    af[state.gpsActivityId] = (af[state.gpsActivityId]||0) + 1;
+    const gpsAct = GPS_ACTIVITIES.find(a=>a.id===state.gpsActivityId);
+    if (gpsAct) { const t=gpsAct.id.split('_')[0]; af[t]=(af[t]||0)+1; }
+    await db.settings.put({key:'activityFrequency', value:af});
+  }
   state.activeTraining=null;state.timerPaused=false;state.timerPausedTotal=0;
   document.getElementById('training-timer-panel').style.display='none';
   document.querySelectorAll('.gym-btn,.gps-activity-btn').forEach(b=>b.classList.remove('active'));
@@ -1428,18 +1656,85 @@ async function renderRecentTrainings(){
   const c=document.getElementById('recent-trainings');if(!c)return;
   const trainings=await db.trainings.orderBy('date').reverse().limit(8).toArray();
   if(!trainings.length){c.innerHTML='<div style="color:var(--steel);font-size:14px;">Nog geen trainingen gelogd</div>';return;}
-  c.innerHTML=trainings.map(t=>{
+
+  // Laad GPS routes voor matching
+  const gpsRoutes = await db.gpsRoutes.orderBy('date').reverse().limit(20).toArray();
+
+  const html = await Promise.all(trainings.map(async t => {
     const distStr=t.distance?` · ${t.distance.toFixed(2)} km`:'';
     const timeStr=t.time?` · ${t.time}`:'';
-    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
-      <div><div style="font-weight:700;font-size:14px">${t.name}</div>
-      <div style="font-size:11px;color:var(--steel);font-family:var(--font-mono)">${new Date(t.date).toLocaleDateString('nl-NL')}${timeStr} · ${formatSeconds(t.duration)}${distStr}</div></div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <div style="font-family:var(--font-mono);color:var(--amber);font-size:16px">${t.kcal} kcal</div>
-        <button onclick="deleteTrainingFromList(${t.id})" style="background:none;border:none;color:var(--red-hot);font-size:16px;cursor:pointer;padding:4px">🗑️</button>
+
+    // Zoek GPS route die bij deze training hoort (op datum/tijdstip)
+    const trainingDate = t.date ? t.date.split('T')[0] : '';
+    const matchRoute = gpsRoutes.find(r => r.date && r.date.startsWith(trainingDate) && r.positions && r.positions.length > 2);
+    const hasGPS = matchRoute && matchRoute.positions && matchRoute.positions.length > 2;
+
+    let mapHtml = '';
+    if (hasGPS) {
+      mapHtml = `<div style="margin-top:8px;"><canvas id="minimap-${t.id}" width="280" height="80" style="width:100%;height:80px;border-radius:4px;background:#0d0d0d;display:block;"></canvas></div>`;
+    }
+
+    return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div><div style="font-weight:700;font-size:14px">${t.name}</div>
+        <div style="font-size:11px;color:var(--steel);font-family:var(--font-mono)">${new Date(t.date).toLocaleDateString('nl-NL')}${timeStr} · ${formatSeconds(t.duration)}${distStr}</div></div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="font-family:var(--font-mono);color:var(--amber);font-size:15px">${t.kcal} kcal</div>
+          <button onclick="deleteTrainingFromList(${t.id})" style="background:none;border:none;color:var(--red-hot);font-size:16px;cursor:pointer;padding:4px">🗑️</button>
+        </div>
       </div>
+      ${mapHtml}
     </div>`;
-  }).join('');
+  }));
+
+  c.innerHTML = html.join('');
+
+  // Teken minimaps na renderen
+  trainings.forEach(t => {
+    const trainingDate = t.date ? t.date.split('T')[0] : '';
+    const matchRoute = gpsRoutes.find(r => r.date && r.date.startsWith(trainingDate) && r.positions && r.positions.length > 2);
+    if (matchRoute) drawMiniMap('minimap-'+t.id, matchRoute.positions);
+  });
+}
+
+function drawMiniMap(canvasId, positions) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !positions || positions.length < 2) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.offsetWidth || 280, H = 80;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.fillStyle = '#0d0d0d';
+  ctx.fillRect(0, 0, W, H);
+
+  const lats = positions.map(p=>p.lat), lngs = positions.map(p=>p.lng);
+  const minLat=Math.min(...lats), maxLat=Math.max(...lats);
+  const minLng=Math.min(...lngs), maxLng=Math.max(...lngs);
+  const pad=8;
+  const scaleX = (W-pad*2)/((maxLng-minLng)||0.0001);
+  const scaleY = (H-pad*2)/((maxLat-minLat)||0.0001);
+  const toX = lng => pad+(lng-minLng)*scaleX;
+  const toY = lat => H-pad-(lat-minLat)*scaleY;
+
+  // Route lijn
+  ctx.beginPath();
+  ctx.strokeStyle='#27ae60';
+  ctx.lineWidth=2;
+  ctx.lineJoin='round';
+  ctx.lineCap='round';
+  positions.forEach((p,i) => i===0 ? ctx.moveTo(toX(p.lng),toY(p.lat)) : ctx.lineTo(toX(p.lng),toY(p.lat)));
+  ctx.stroke();
+
+  // Start punt (groen)
+  ctx.beginPath();
+  ctx.arc(toX(positions[0].lng),toY(positions[0].lat),4,0,Math.PI*2);
+  ctx.fillStyle='#27ae60';ctx.fill();
+  // Eindpunt (rood)
+  const last=positions[positions.length-1];
+  ctx.beginPath();
+  ctx.arc(toX(last.lng),toY(last.lat),4,0,Math.PI*2);
+  ctx.fillStyle='var(--red-hot)';ctx.fillStyle='#c0392b';ctx.fill();
 }
 async function deleteTrainingFromList(id){await db.trainings.delete(id);toast('Training verwijderd','success');renderRecentTrainings();updateDashboard();updateMovementBar();}
 async function getTodayCaloriesBurned(){return(await db.trainings.where('date').startsWith(new Date().toISOString().split('T')[0]).toArray()).reduce((s,t)=>s+(t.kcal||0),0);}

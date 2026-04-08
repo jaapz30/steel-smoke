@@ -4,10 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#c0392b">
+  <!-- PWA Android -->
   <meta name="mobile-web-app-capable" content="yes">
+  <!-- PWA iOS — fullscreen vereist deze tags -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Steel &amp; Smoke">
+  <!-- iOS splashscreen / icon hints -->
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" sizes="512x512" href="icons/icon-512.png">
+  <!-- Prevent bounce/overscroll -->
+  <style>html,body{overscroll-behavior:none;}</style>
   <title>Steel &amp; Smoke</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
@@ -98,6 +106,15 @@
         <div><div style="font-size:12px;color:var(--steel)">Doel</div><div style="font-family:var(--font-mono);font-size:22px;" id="dash-kcal-goal">-- kcal</div></div>
       </div>
       <div class="progress-bar-wrap mt-8"><div class="progress-bar"><div class="progress-fill amber" id="dash-cal-bar" style="width:0%"></div></div></div>
+    </div>
+
+    <!-- NOTIFICATIECENTRUM -->
+    <div class="card card-red" style="margin:10px 16px 0;">
+      <div class="flex-between" style="margin-bottom:8px">
+        <div class="card-title" style="margin:0">🔔 Coach Meldingen</div>
+        <button onclick="showDrinkModal()" style="background:rgba(127,140,141,0.2);border:none;color:var(--steel-light);padding:5px 10px;border-radius:4px;font-size:12px;cursor:pointer;">💧 Drank</button>
+      </div>
+      <div id="dash-notifications"><div style="color:var(--steel);font-size:13px">Laden...</div></div>
     </div>
 
     <div class="card card-green"><div class="card-title">🚭 Rookvrij</div><div id="dash-smoke-status" style="font-family:var(--font-mono);font-size:18px;color:var(--green-bright)">Stel stopmoment in</div><div id="dash-smoke-saved" style="color:var(--steel);font-size:12px;margin-top:4px"></div></div>
@@ -412,6 +429,16 @@
   .meal-slot { cursor:pointer; transition:background 0.1s, transform 0.1s; }
   .meal-slot:active { background:rgba(230,126,34,0.12) !important; transform:scale(0.98); }
 </style>
+<!-- DRINK MODAL -->
+<div class="modal-overlay" id="drink-modal">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">💧 Vocht Bijhouden</div>
+    <div id="drink-modal-content"></div>
+    <button class="btn btn-ghost btn-sm mt-8" onclick="closeModal('drink-modal')">Sluiten</button>
+  </div>
+</div>
+
 <div id="toast-container"></div>
 <script src="https://cdn.jsdelivr.net/npm/dexie@3.2.4/dist/dexie.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
