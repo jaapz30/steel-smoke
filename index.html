@@ -328,6 +328,7 @@
     <div class="modal-handle"></div>
     <div class="modal-title" id="meal-modal-title">Eetmoment</div>
     <div id="meal-nutrition-advice"></div>
+    <div id="meal-mode-bar"></div>
     <div style="display:flex;gap:3px;margin-bottom:12px;overflow-x:auto;">
       <button id="meal-tabBtn-suggest" class="btn btn-green  btn-sm meal-tab-btn active-tab" style="flex:1;min-width:50px;font-size:11px;padding:8px 4px" onclick="mealTab('suggest')">🧠 Coach</button>
       <button id="meal-tabBtn-preset"  class="btn btn-ghost  btn-sm meal-tab-btn"            style="flex:1;min-width:50px;font-size:11px;padding:8px 4px" onclick="mealTab('preset')">🍽️ Menu</button>
@@ -426,6 +427,8 @@
 <style>
   .meal-slot.past-meal { border-left:3px solid var(--red-hot); opacity:0.9; }
   .meal-slot.past-meal .meal-time { color:var(--red-hot); }
+  .meal-slot.planned { border-left:3px solid var(--green-bright); background:rgba(39,174,96,0.05); }
+  .meal-slot.planned .meal-time { color:var(--green-bright); }
   .meal-slot { cursor:pointer; transition:background 0.1s, transform 0.1s; }
   .meal-slot:active { background:rgba(230,126,34,0.12) !important; transform:scale(0.98); }
 </style>
@@ -437,6 +440,25 @@
     <div id="drink-modal-content"></div>
     <button class="btn btn-ghost btn-sm mt-8" onclick="closeModal('drink-modal')">Sluiten</button>
   </div>
+</div>
+
+<!-- PWA INSTALL BANNER (Android/Chrome) -->
+<div id="pwa-install-banner" style="display:none;position:fixed;bottom:80px;left:12px;right:12px;z-index:9000;background:var(--darker);border:1px solid var(--amber);border-radius:8px;padding:12px 14px;align-items:center;gap:12px;box-shadow:0 4px 20px rgba(0,0,0,0.6);">
+  <div style="flex:1">
+    <div style="font-family:var(--font-display);font-size:15px;letter-spacing:1px;color:var(--amber)">📱 INSTALLEER ALS APP</div>
+    <div style="font-size:12px;color:var(--steel);margin-top:2px">Volledig scherm, geen adresbalk, sneller laden</div>
+  </div>
+  <button onclick="installPWA()" class="btn btn-amber btn-sm" style="white-space:nowrap;flex-shrink:0">Installeer</button>
+  <button onclick="dismissInstallBanner()" style="background:none;border:none;color:var(--steel);font-size:20px;cursor:pointer;padding:0 4px;flex-shrink:0">✕</button>
+</div>
+
+<!-- iOS INSTALL HINT -->
+<div id="ios-install-hint" style="display:none;position:fixed;bottom:80px;left:12px;right:12px;z-index:9000;background:var(--darker);border:1px solid var(--steel);border-radius:8px;padding:12px 14px;align-items:flex-start;gap:10px;box-shadow:0 4px 20px rgba(0,0,0,0.6);">
+  <div style="flex:1">
+    <div style="font-family:var(--font-display);font-size:14px;letter-spacing:1px;color:var(--white)">📱 Zet op beginscherm (iOS)</div>
+    <div style="font-size:12px;color:var(--steel);margin-top:4px;line-height:1.5">Tik op <strong style="color:var(--white)">Delen</strong> (het vierkantje met pijl omhoog) → <strong style="color:var(--white)">Zet op beginscherm</strong> → Voeg toe</div>
+  </div>
+  <button onclick="document.getElementById('ios-install-hint').style.display='none';dismissInstallBanner()" style="background:none;border:none;color:var(--steel);font-size:20px;cursor:pointer;padding:0 4px;flex-shrink:0">✕</button>
 </div>
 
 <div id="toast-container"></div>

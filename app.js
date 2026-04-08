@@ -1,5 +1,5 @@
 'use strict';
-// BUILD: 20260407-2230 — v7.1 notif action fix — bump to force reload
+// BUILD: 20260408-0900 — v8: meal planning, weight fix, PWA install — v7.1 notif action fix — bump to force reload
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
@@ -12,6 +12,8 @@ db.version(2).stores({ settings:'key', weights:'++id,date', meals:'++id,date', t
 db.version(3).stores({ settings:'key', weights:'++id,date', meals:'++id,date', trainings:'++id,date', gpsRoutes:'++id,date', foodLog:'++id,date', customSports:'++id', customMenus:'++id', savedMeals:'++id' });
 db.version(4).stores({ settings:'key', weights:'++id,date', meals:'++id,date', trainings:'++id,date,time', gpsRoutes:'++id,date', foodLog:'++id,date', customSports:'++id', customMenus:'++id', savedMeals:'++id' });
 db.version(5).stores({ settings:'key', weights:'++id,date', meals:'++id,date', trainings:'++id,date,time', gpsRoutes:'++id,date', foodLog:'++id,date', customSports:'++id', customMenus:'++id', savedMeals:'++id', customFoods:'++id' });
+// v6: aparte tabel voor maaltijdplannen (gepland ≠ gegeten)
+db.version(6).stores({ settings:'key', weights:'++id,date', meals:'++id,date', trainings:'++id,date,time', gpsRoutes:'++id,date', foodLog:'++id,date', customSports:'++id', customMenus:'++id', savedMeals:'++id', customFoods:'++id', mealPlans:'++id,date,mealIndex' });
 
 // ── VASTE VOEDINGSMIDDELEN ────────────────────────────────────
 const FOODS_BUILTIN = [
@@ -737,21 +739,39 @@ function updateNextMeal() {
   const now=new Date(),nowMin=now.getHours()*60+now.getMinutes();
   let nextIdx=-1,nextTime=null;
   state.mealSchedule.forEach((t,i)=>{const[h,m]=t.split(':').map(Number);if(h*60+m>nowMin&&nextIdx===-1){nextIdx=i;nextTime=t;}});
-  if(nextTime!==null){
-    const[h,m]=nextTime.split(':').map(Number);
-    const mins=h*60+m-nowMin;
-    const adv=getMealNutritionAdvice(nextIdx);
-    const names=['Ontbijt','Tussendoor','Lunch','Tussendoor','Avondeten','Snack'];
-    el.innerHTML=`<div style="cursor:pointer;" onclick="showScreen('food');openMealModal(${nextIdx})">
-      <div style="margin-bottom:4px"><strong style="color:var(--amber);font-family:var(--font-mono)">${nextTime}</strong>
-      <span style="color:var(--steel);font-size:13px"> — over ${mins} min — ${names[nextIdx]}</span></div>
-      <div style="font-size:12px;color:var(--steel-light);line-height:1.4">${adv.suggestions?.[0]?.food||adv.suggestion?.food||'—'}</div>
-      <div style="font-size:11px;color:var(--steel);font-family:var(--font-mono);margin-top:2px">${adv.mealKcal} kcal · ${adv.mealProtein}g eiwit doel</div>
-      <div style="font-size:11px;color:var(--amber);margin-top:2px">👆 Tik om te loggen</div>
+  if(nextTime===null){el.textContent='Geen eetmomenten meer vandaag!';return;}
+  const[h,m]=nextTime.split(':').map(Number);
+  const mins=h*60+m-nowMin;
+  const names=['Ontbijt','Tussendoor','Lunch','Tussendoor','Avondeten','Snack'];
+  // Check of er een plan is voor dit moment
+  const today=new Date().toISOString().split('T')[0];
+  db.mealPlans.where({date:today,mealIndex:nextIdx}).first().then(plan=>{
+    let foodLabel, kcalLabel, hint, clickFn;
+    if(plan){
+      // Er is een plan — toon het
+      foodLabel=`<span style="color:var(--green-bright)">📋 ${plan.food}</span>`;
+      kcalLabel=plan.kcal+' kcal gepland · '+plan.protein+'g eiwit';
+      hint='Tik om te bevestigen dat je het gegeten hebt';
+      clickFn=`confirmMealEaten(${nextIdx})`;
+    } else {
+      // Geen plan — toon coach suggestie
+      const adv=getMealNutritionAdvice(nextIdx);
+      const topSugg=adv.suggestions?.[0];
+      foodLabel=topSugg?topSugg.food:(adv.suggestion?.food||'Tik om te plannen of loggen');
+      kcalLabel='~'+adv.mealKcal+' kcal doel · '+adv.mealProtein+'g eiwit';
+      hint='Tik om te plannen of direct te loggen';
+      clickFn=`showScreen('food');openMealModal(${nextIdx})`;
+    }
+    el.innerHTML=`<div style="cursor:pointer;" onclick="${clickFn}">
+      <div style="margin-bottom:4px">
+        <strong style="color:var(--amber);font-family:var(--font-mono)">${nextTime}</strong>
+        <span style="color:var(--steel);font-size:13px"> — over ${mins} min — ${names[nextIdx]}</span>
+      </div>
+      <div style="font-size:13px;color:var(--steel-light);line-height:1.4;margin-bottom:3px">${foodLabel}</div>
+      <div style="font-size:11px;color:var(--steel);font-family:var(--font-mono)">${kcalLabel}</div>
+      <div style="font-size:11px;color:var(--amber);margin-top:3px">👆 ${hint}</div>
     </div>`;
-  } else {
-    el.textContent='Geen eetmomenten meer vandaag!';
-  }
+  });
 }
 
 // ── BEWEEGVOORTGANG BALK ──────────────────────────────────────
@@ -902,12 +922,17 @@ async function logWeight(){
   if(!w||w<30||w>300){toast('Voer een geldig gewicht in!','error');return;}
   await db.weights.add({date:new Date().toISOString(),weight:w});
   state.weightEntries=await db.weights.orderBy('date').toArray();
-  state.profile.weight=w;await db.settings.put({key:'profile',value:state.profile});
+  // FIX: update profiel gewicht correct en sla direct op
+  if(!state.profile) state.profile = {};
+  state.profile.weight = w;
+  await db.settings.put({key:'profile', value:state.profile});
   document.getElementById('weight-input').value='';
   toast(w+' kg gelogd!','success');vibrate([30,20,30]);
   renderWeightHistory();drawWeightChart();updateDashboard();
-  const prev=state.weightEntries[state.weightEntries.length-2];
-  if(prev&&w<prev.weight)speak(`Goed bezig soldaat! ${(prev.weight-w).toFixed(1)} kilo lichter!`);
+  const entries = state.weightEntries;
+  const prev = entries.length >= 2 ? entries[entries.length-2] : null;
+  if(prev && w < prev.weight) speak(`Goed bezig soldaat! ${(prev.weight-w).toFixed(1)} kilo lichter!`);
+  else if(prev && w > prev.weight) toast('Gewicht iets omhoog. Niet erg, continue!','');
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1031,8 +1056,12 @@ function getMealNutritionAdvice(mealIndex) {
   const today = new Date().toISOString().split('T')[0];
   const log = _todayFoodCache.date === today ? _todayFoodCache.log : [];
 
-  // Wat is er al gegeten voor dit eetmoment?
-  const alreadyEaten = log.filter(e => e.mealIndex < mealIndex);
+  // Wat is er al gegeten INCLUSIEF GEPLANDE maaltijden voor dit eetmoment?
+  const plans = _todayFoodCache.plans || [];
+  const alreadyEaten = [
+    ...log.filter(e => e.mealIndex < mealIndex),
+    ...plans.filter(p => p.mealIndex < mealIndex), // geplande maaltijden meerekenen
+  ];
   const eatenKcal    = alreadyEaten.reduce((s,e) => s + (e.kcal||0), 0);
   const eatenProtein = alreadyEaten.reduce((s,e) => s + (e.protein||0), 0);
   const eatenFat     = alreadyEaten.reduce((s,e) => s + (e.fat||0), 0);
@@ -1192,7 +1221,11 @@ function _getStaticSuggestions(mealIndex) {
 async function refreshFoodCache() {
   const today = new Date().toISOString().split('T')[0];
   const log = await db.foodLog.where('date').equals(today).toArray();
-  _todayFoodCache = { log, date: today };
+  // Include plans in cache so coach advice accounts for planned meals too
+  const plans = await db.mealPlans.where('date').equals(today).toArray();
+  // Mark planned items so getMealNutritionAdvice can distinguish
+  const planAsLog = plans.map(p=>({...p, isPlanned:true}));
+  _todayFoodCache = { log, plans: planAsLog, date: today };
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1221,47 +1254,61 @@ function updateBreakfastTime(){
 }
 async function renderMealSlots(){
   const container=document.getElementById('meal-slots-container');if(!container)return;
-  // Ververs cache zodat adviezen kloppen
   await refreshFoodCache();
-  const todayLog=_todayFoodCache.log;
+  const todayLog = _todayFoodCache.log;
+  const todayPlans = await getTodayMealPlans();
   const now=new Date(),nowMin=now.getHours()*60+now.getMinutes();
   const names=['Ontbijt','Tussendoor','Lunch','Tussendoor','Avondeten','Snack'];
   let html='';
+
   state.mealSchedule.forEach((time,i)=>{
     const[h,m]=time.split(':').map(Number),mealMin=h*60+m;
-    const done=todayLog.find(e=>e.mealIndex===i);
-    const isNow=Math.abs(mealMin-nowMin)<30&&!done;
-    const isFuture=mealMin>nowMin+30&&!done;
-    const isPast=mealMin<nowMin-30&&!done;
+    const eaten  = todayLog.find(e=>e.mealIndex===i);
+    const planned = todayPlans.find(p=>p.mealIndex===i);
+    const isNow  = Math.abs(mealMin-nowMin)<30 && !eaten;
+    const isPast = mealMin < nowMin-30 && !eaten;
 
-    // Altijd klikbaar — ook toekomstige en gemiste momenten
-    let cls=done?'done':isNow?'active-now':isPast?'past-meal':'';
-    let check=done?'✅':isNow?'🔔':isPast?'⚠️':'○';
+    let cls, check, label, kcalLbl, sublabel='', actionHint='';
 
-    const adv=getMealNutritionAdvice(i);
-    let label, kcalLbl, sublabel='';
-
-    if(done){
-      label=done.food;
-      kcalLbl=done.kcal+' kcal gegeten';
+    if(eaten){
+      // ✅ Gegeten — groen, niet meer klikbaar voor log
+      cls='done'; check='✅';
+      label=eaten.food;
+      kcalLbl=eaten.kcal+' kcal gegeten';
+    } else if(planned){
+      // 📋 Gepland maar nog niet gegeten
+      cls='planned'; check='📋';
+      label=planned.food;
+      kcalLbl=planned.kcal+' kcal gepland';
+      actionHint='<div style="font-size:10px;color:var(--green-bright);margin-top:3px">Tik: Gegeten ✓ &nbsp;|&nbsp; Lang indrukken: Wijzigen</div>';
     } else if(isPast){
-      label='Niet gelogd — klik om alsnog in te voeren';
-      kcalLbl=adv.mealKcal+' kcal doel';
+      // ⚠️ Gemist
+      cls='past-meal'; check='⚠️';
+      label='Niet gelogd — tik om in te voeren';
+      kcalLbl='';
     } else {
-      // Toon slimste suggestie
+      // ○ Gepland, coach suggestie tonen
+      cls=isNow?'active-now':''; check=isNow?'🔔':'○';
+      const adv=getMealNutritionAdvice(i);
       const topSugg=adv.suggestions?.[0];
-      label=topSugg?topSugg.food:'—';
-      kcalLbl=adv.mealKcal+' kcal doel · '+adv.mealProtein+'g eiwit';
-      if(adv.remainProtein>20) sublabel='⚠️ Nog '+Math.round(adv.remainProtein)+'g eiwit nodig vandaag';
+      label=topSugg?topSugg.food:(adv.suggestion?.food||'Tik om te plannen of loggen');
+      kcalLbl='~'+adv.mealKcal+' kcal doel · '+adv.mealProtein+'g eiwit';
+      if(adv.remainProtein>20) sublabel='⚠️ Nog '+Math.round(adv.remainProtein)+'g eiwit nodig';
     }
 
-    html+=`<div class="meal-slot ${cls}" onclick="openMealModal(${i})" style="cursor:pointer;">
-      <div class="meal-time" style="${isPast&&!done?'color:var(--red-hot)':''}">${time}</div>
+    // Click handler: eaten → confirmEaten, planned → confirm, else → modal
+    const clickHandler = planned && !eaten
+      ? `confirmMealEaten(${i})`
+      : `openMealModal(${i})`;
+
+    html+=`<div class="meal-slot ${cls}" onclick="${clickHandler}" style="cursor:pointer;">
+      <div class="meal-time" style="${isPast&&!eaten?'color:var(--red-hot)':planned&&!eaten?'color:var(--green-bright)':''}">${time}</div>
       <div style="flex:1">
-        <div class="meal-name">${names[i]}${isFuture?' <span style="font-size:10px;color:var(--steel)">(gepland)</span>':''}</div>
-        <div class="meal-kcal" style="font-size:12px;line-height:1.4;">${label}</div>
-        <div style="font-size:10px;color:var(--steel);font-family:var(--font-mono)">${kcalLbl}</div>
+        <div class="meal-name">${names[i]}</div>
+        <div class="meal-kcal" style="font-size:12px;line-height:1.4">${label}</div>
+        ${kcalLbl?`<div style="font-size:10px;color:var(--steel);font-family:var(--font-mono)">${kcalLbl}</div>`:''}
         ${sublabel?`<div style="font-size:10px;color:var(--amber);margin-top:2px">${sublabel}</div>`:''}
+        ${actionHint}
       </div>
       <div class="meal-check">${check}</div>
     </div>`;
@@ -1271,11 +1318,33 @@ async function renderMealSlots(){
 }
 
 // ── MEAL MODAL MET SLIMME VOEDINGSADVIES ─────────────────────
-function openMealModal(i){
+function openMealModal(i, forceLog=false){
   state.currentMealIndex=i;state.menuItems=[];
+  state._mealModalMode = forceLog ? 'log' : 'plan'; // plan = voorbereiding, log = daadwerkelijk gegeten
   const adv=getMealNutritionAdvice(i);
   const names=['Ontbijt','Tussendoor','Lunch','Tussendoor','Avondeten','Snack'];
   document.getElementById('meal-modal-title').textContent=`${names[i]} — ${state.mealSchedule[i]}`;
+
+  // Toon plan/log toggle bovenaan
+  const modeBar = document.getElementById('meal-mode-bar');
+  if(modeBar){
+    const now=new Date(),nowMin=now.getHours()*60+now.getMinutes();
+    const[mh,mm]=state.mealSchedule[i].split(':').map(Number);
+    const isFuture=(mh*60+mm) > nowMin+15;
+    modeBar.innerHTML=`<div style="display:flex;gap:6px;margin-bottom:10px;">
+      <button id="mode-btn-plan" onclick="setMealModalMode('plan')"
+        class="btn btn-sm ${state._mealModalMode!=='log'?'btn-amber':'btn-ghost'}"
+        style="flex:1;font-size:12px">📋 Plan vooruit</button>
+      <button id="mode-btn-log" onclick="setMealModalMode('log')"
+        class="btn btn-sm ${state._mealModalMode==='log'?'btn-green':'btn-ghost'}"
+        style="flex:1;font-size:12px">✅ Ik heb dit gegeten</button>
+    </div>
+    <div id="meal-mode-hint" style="font-size:11px;color:var(--steel);margin-bottom:8px;">
+      ${state._mealModalMode==='log'
+        ? '✅ Dit log je als gegeten — telt meteen mee in je dagdoel.'
+        : '📋 Plan je maaltijd vooruit. Je vinkt hem af als je echt gegeten hebt.'}
+    </div>`;
+  }
 
   // Toon slimme voedingsadvies banner met tekorten van vandaag
   const banner=document.getElementById('meal-nutrition-advice');
@@ -1379,7 +1448,21 @@ function renderSmartSuggestions(mealIndex, adv) {
   state._selectedSuggest = null;
 }
 
-// Directe log van een FOODS-product
+function setMealModalMode(mode) {
+  state._mealModalMode = mode;
+  // Update knoppen
+  document.getElementById('mode-btn-plan')?.classList.toggle('btn-amber', mode!=='log');
+  document.getElementById('mode-btn-plan')?.classList.toggle('btn-ghost', mode==='log');
+  document.getElementById('mode-btn-log')?.classList.toggle('btn-green', mode==='log');
+  document.getElementById('mode-btn-log')?.classList.toggle('btn-ghost', mode!=='log');
+  const hint = document.getElementById('meal-mode-hint');
+  if(hint) hint.textContent = mode==='log'
+    ? '✅ Dit log je als gegeten — telt meteen mee in je dagdoel.'
+    : '📋 Plan je maaltijd vooruit. Je vinkt hem af als je echt gegeten hebt.';
+  vibrate(15);
+}
+
+// Directe log/plan van een FOODS-product
 async function quickLogFood(foodId, qty) {
   const food = FOODS.find(f => f.id === foodId);
   if (!food) return;
@@ -1388,19 +1471,21 @@ async function quickLogFood(foodId, qty) {
   const carbs = Math.round(food.carbs * qty);
   const fat = Math.round(food.fat * qty);
   const desc = `${food.emoji} ${food.name} (${qty}× ${food.unit})`;
-  await saveMealEntry(state.currentMealIndex, desc, kcal, protein, carbs, fat);
+  if(state._mealModalMode === 'log') {
+    await saveMealEntry(state.currentMealIndex, desc, kcal, protein, carbs, fat);
+  } else {
+    await planMealEntry(state.currentMealIndex, desc, kcal, protein, carbs, fat);
+  }
 }
 
-// Directe log van een combo suggestie
+// Directe log/plan van een combo suggestie
 async function quickLogCombo(id, food, kcal, protein, carbs, fat) {
-  // Markeer als geselecteerd en log meteen
-  document.querySelectorAll('.meal-preset-card').forEach(el => {
-    el.style.borderColor = 'var(--border)';
-    el.style.background = 'var(--card)';
-  });
-  // Slight feedback
   vibrate(15);
-  await saveMealEntry(state.currentMealIndex, food, kcal, protein, carbs, fat);
+  if(state._mealModalMode === 'log') {
+    await saveMealEntry(state.currentMealIndex, food, kcal, protein, carbs, fat);
+  } else {
+    await planMealEntry(state.currentMealIndex, food, kcal, protein, carbs, fat);
+  }
 }
 
 function mealTab(tab){
@@ -1435,7 +1520,11 @@ function selectPreset(id){
 async function markMealDonePreset(){
   if(!selectedPresetId){toast('Selecteer eerst een menu!','error');return;}
   const menu=PRESET_MENUS.find(m=>m.id===selectedPresetId);if(!menu)return;
-  await saveMealEntry(state.currentMealIndex,menu.name,menu.kcal,menu.protein,menu.carbs,menu.fat);
+  if(state._mealModalMode==='log'){
+    await saveMealEntry(state.currentMealIndex,menu.name,menu.kcal,menu.protein,menu.carbs,menu.fat);
+  } else {
+    await planMealEntry(state.currentMealIndex,menu.name,menu.kcal,menu.protein,menu.carbs,menu.fat);
+  }
   selectedPresetId=null;
 }
 
@@ -1479,7 +1568,12 @@ async function markMealDoneMenu(){
   const totC=Math.round(state.menuItems.reduce((s,x)=>s+x.carbs*x.qty,0));
   const totF=Math.round(state.menuItems.reduce((s,x)=>s+x.fat*x.qty,0));
   const desc=state.menuItems.map(x=>`${x.qty}× ${x.name}`).join(', ');
-  await saveMealEntry(state.currentMealIndex,desc,totK,totP,totC,totF);state.menuItems=[];
+  if(state._mealModalMode==='log'){
+    await saveMealEntry(state.currentMealIndex,desc,totK,totP,totC,totF);
+  } else {
+    await planMealEntry(state.currentMealIndex,desc,totK,totP,totC,totF);
+  }
+  state.menuItems=[];
 }
 async function saveCurrentMenu(){
   if(!state.menuItems.length){toast('Bouw eerst een menu!','error');return;}
@@ -1552,10 +1646,63 @@ async function markMealDoneCustom(){
     toast('✅ Product opgeslagen in Mijn Producten!', 'success');
   }
 
-  await saveMealEntry(state.currentMealIndex,desc,kcal,prot,carb,fat);
+  if(state._mealModalMode==='log'){
+    await saveMealEntry(state.currentMealIndex,desc,kcal,prot,carb,fat);
+  } else {
+    await planMealEntry(state.currentMealIndex,desc,kcal,prot,carb,fat);
+  }
   ['custom-meal-desc','custom-meal-kcal','custom-meal-protein','custom-meal-carbs','custom-meal-fat'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   const cb = document.getElementById('custom-save-as-product');
   if (cb) cb.checked = false;
+}
+
+// ══════════════════════════════════════════════════════════
+//  MAALTIJDPLANNING — plan vooruit, vink af als je echt gegeten hebt
+// ══════════════════════════════════════════════════════════
+
+// Sla een maaltijd op als PLAN (niet als gegeten)
+async function planMealEntry(mealIndex, food, kcal, protein, carbs, fat) {
+  const today = new Date().toISOString().split('T')[0];
+  // Verwijder eventueel bestaand plan voor dit eetmoment vandaag
+  const existing = await db.mealPlans.where({date: today, mealIndex}).toArray();
+  for (const e of existing) await db.mealPlans.delete(e.id);
+  await db.mealPlans.add({
+    date: today,
+    mealIndex,
+    time: state.mealSchedule[mealIndex],
+    food, kcal,
+    protein: Math.round(protein||0),
+    carbs: Math.round(carbs||0),
+    fat: Math.round(fat||0),
+    plannedAt: new Date().toISOString(),
+  });
+  await refreshFoodCache();
+  closeModal('meal-modal'); selectedPresetId = null;
+  toast('📋 Gepland voor '+state.mealSchedule[mealIndex]+'!','success');
+  vibrate([30,10,30]);
+  showScreen('food'); // terug naar eetschema
+}
+
+// Markeer een gepland maaltijdmoment als GEGETEN (nu)
+async function confirmMealEaten(mealIndex) {
+  const today = new Date().toISOString().split('T')[0];
+  // Check of er een plan is
+  const plans = await db.mealPlans.where({date: today, mealIndex}).toArray();
+  if (plans.length > 0) {
+    const plan = plans[0];
+    await saveMealEntry(mealIndex, plan.food, plan.kcal, plan.protein, plan.carbs, plan.fat);
+    // Verwijder het plan
+    await db.mealPlans.delete(plan.id);
+    return;
+  }
+  // Geen plan: open gewoon het log scherm
+  openMealModal(mealIndex);
+}
+
+// Haal geplande maaltijden op voor vandaag
+async function getTodayMealPlans() {
+  const today = new Date().toISOString().split('T')[0];
+  return db.mealPlans.where('date').equals(today).toArray();
 }
 
 async function saveMealEntry(mealIndex,food,kcal,protein,carbs,fat){
@@ -1969,6 +2116,7 @@ async function fullReset(){
     db.customFoods.clear(),
     db.customSports.clear(),
     db.settings.clear(),
+    db.mealPlans?.clear() || Promise.resolve(),
   ]);
   // Reset state volledig
   state.weightEntries = [];
@@ -2199,8 +2347,71 @@ function scheduleMidnightReset(){
   },midnight-now);
 }
 
+// ── PWA INSTALL PROMPT ────────────────────────────────────────
+let _pwaInstallPrompt = null;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  _pwaInstallPrompt = e;
+  // Toon install banner
+  const banner = document.getElementById('pwa-install-banner');
+  if (banner) banner.style.display = 'flex';
+});
+
+window.addEventListener('appinstalled', () => {
+  _pwaInstallPrompt = null;
+  const banner = document.getElementById('pwa-install-banner');
+  if (banner) banner.style.display = 'none';
+  toast('✅ App geïnstalleerd! Volledig scherm actief.', 'success');
+});
+
+async function installPWA() {
+  if (!_pwaInstallPrompt) {
+    // iOS instructie
+    toast('iOS: deel-knop → "Zet op beginscherm"', '');
+    return;
+  }
+  _pwaInstallPrompt.prompt();
+  const result = await _pwaInstallPrompt.userChoice;
+  if (result.outcome === 'accepted') {
+    toast('✅ Installatie gestart!', 'success');
+  }
+  _pwaInstallPrompt = null;
+  const banner = document.getElementById('pwa-install-banner');
+  if (banner) banner.style.display = 'none';
+}
+
+function dismissInstallBanner() {
+  const banner = document.getElementById('pwa-install-banner');
+  if (banner) banner.style.display = 'none';
+  // Remember dismissal for 3 days
+  localStorage.setItem('pwa_dismissed', Date.now());
+}
+
+// Check iOS standalone
+function isRunningStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+}
+
 window.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('active');}));
   init();scheduleMidnightReset();
   if(window.speechSynthesis)window.speechSynthesis.onvoiceschanged=()=>{};
+
+  // Show iOS install hint if not standalone and not dismissed recently
+  if(!isRunningStandalone()){
+    const dismissed = localStorage.getItem('pwa_dismissed');
+    const iosHint = document.getElementById('ios-install-hint');
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    if(isIOS && iosHint && (!dismissed || Date.now()-parseInt(dismissed) > 3*86400000)){
+      iosHint.style.display='flex';
+    }
+  } else {
+    // Running as PWA — hide banners
+    const b1=document.getElementById('pwa-install-banner');
+    const b2=document.getElementById('ios-install-hint');
+    if(b1)b1.style.display='none';
+    if(b2)b2.style.display='none';
+  }
 });
