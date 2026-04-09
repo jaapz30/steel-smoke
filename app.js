@@ -1,8 +1,30 @@
 'use strict';
-// BUILD: 20260409-2200 — v12: dagmenu systeem, favorietenmenu, fullscreen fix
+// BUILD: 20260409-2300 — v12.1: PWA fullscreen definitieve fix, absolute SW paden
 
+// ── SERVICE WORKER REGISTRATIE ───────────────────────────────
+// Absoluut pad + scope expliciet opgeven = kritisch voor GitHub Pages PWA
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+  window.addEventListener('load', async () => {
+    try {
+      const reg = await navigator.serviceWorker.register(
+        '/steel-smoke/sw.js',
+        { scope: '/steel-smoke/' }
+      );
+      console.log('[App] SW registered, scope:', reg.scope);
+
+      // Controleer op nieuwe SW versie
+      reg.addEventListener('updatefound', () => {
+        const newSW = reg.installing;
+        newSW?.addEventListener('statechange', () => {
+          if (newSW.statechange === 'installed' && navigator.serviceWorker.controller) {
+            console.log('[App] Nieuwe versie beschikbaar');
+          }
+        });
+      });
+    } catch (err) {
+      console.warn('[App] SW registratie mislukt:', err);
+    }
+  });
 }
 
 // ── DATABASE v5 ──────────────────────────────────────────────
@@ -3450,71 +3472,108 @@ function scheduleMidnightReset(){
   },midnight-now);
 }
 
-// ── PWA INSTALL PROMPT ────────────────────────────────────────
+// ── PWA INSTALL PROMPT — robuuste implementatie ───────────────
 let _pwaInstallPrompt = null;
 
+// Vang het event op zodra Chrome het stuurt
+// Chrome stuurt dit EENMALIG — daarna nooit meer tenzij:
+// a) app al geïnstalleerd is
+// b) gebruiker eerder "Niet nu" koos (90 dagen cooldown)
 window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault();
+  e.preventDefault(); // verhinder standaard Chrome-banner
   _pwaInstallPrompt = e;
-  // Toon install banner
-  const banner = document.getElementById('pwa-install-banner');
-  if (banner) banner.style.display = 'flex';
+  console.log('[PWA] beforeinstallprompt ontvangen — app installeerbaar');
+
+  // Toon alleen als niet al geïnstalleerd en niet recent gedismissed
+  if (!isRunningStandalone()) {
+    const dismissed = localStorage.getItem('pwa_dismissed');
+    // Toon na 24 uur opnieuw (niet 3 dagen — anders mist de gebruiker het)
+    if (!dismissed || Date.now() - parseInt(dismissed) > 86400000) {
+      const banner = document.getElementById('pwa-install-banner');
+      if (banner) banner.style.display = 'flex';
+    }
+  }
 });
 
+// App succesvol geïnstalleerd
 window.addEventListener('appinstalled', () => {
   _pwaInstallPrompt = null;
-  const banner = document.getElementById('pwa-install-banner');
-  if (banner) banner.style.display = 'none';
-  toast('✅ App geïnstalleerd! Volledig scherm actief.', 'success');
+  console.log('[PWA] App geïnstalleerd!');
+  document.getElementById('pwa-install-banner')?.style.setProperty('display','none');
+  document.getElementById('ios-install-hint')?.style.setProperty('display','none');
+  localStorage.removeItem('pwa_dismissed');
+  setTimeout(() => toast('✅ App geïnstalleerd! Open vanuit beginscherm voor volledig scherm.', 'success'), 500);
 });
 
 async function installPWA() {
-  if (!_pwaInstallPrompt) {
-    // iOS instructie
-    toast('iOS: deel-knop → "Zet op beginscherm"', '');
-    return;
+  if (_pwaInstallPrompt) {
+    // Android Chrome: toon native install dialog
+    console.log('[PWA] Toon install prompt');
+    _pwaInstallPrompt.prompt();
+    const result = await _pwaInstallPrompt.userChoice;
+    console.log('[PWA] Gebruikerskeuze:', result.outcome);
+    _pwaInstallPrompt = null;
+    document.getElementById('pwa-install-banner')?.style.setProperty('display','none');
+    if (result.outcome === 'accepted') {
+      toast('✅ Installeren... open de app vanuit het startscherm!', 'success');
+    }
+  } else if (isRunningStandalone()) {
+    toast('✅ App is al geïnstalleerd en draait fullscreen!', 'success');
+  } else {
+    // iOS of browser zonder installatie-ondersteuning
+    const iosHint = document.getElementById('ios-install-hint');
+    if (iosHint) { iosHint.style.display = 'flex'; }
+    else { toast('Gebruik de browser-menu → Toevoegen aan beginscherm', ''); }
   }
-  _pwaInstallPrompt.prompt();
-  const result = await _pwaInstallPrompt.userChoice;
-  if (result.outcome === 'accepted') {
-    toast('✅ Installatie gestart!', 'success');
-  }
-  _pwaInstallPrompt = null;
-  const banner = document.getElementById('pwa-install-banner');
-  if (banner) banner.style.display = 'none';
 }
 
 function dismissInstallBanner() {
-  const banner = document.getElementById('pwa-install-banner');
-  if (banner) banner.style.display = 'none';
-  // Remember dismissal for 3 days
+  document.getElementById('pwa-install-banner')?.style.setProperty('display','none');
   localStorage.setItem('pwa_dismissed', Date.now());
 }
 
-// Check iOS standalone
+// Detecteer of app al als standalone/PWA draait
 function isRunningStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches
-    || window.navigator.standalone === true;
+    || window.matchMedia('(display-mode: fullscreen)').matches
+    || window.navigator.standalone === true; // iOS Safari
 }
 
-window.addEventListener('DOMContentLoaded',()=>{
-  document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('active');}));
-  init();scheduleMidnightReset();
-  if(window.speechSynthesis)window.speechSynthesis.onvoiceschanged=()=>{};
+window.addEventListener('DOMContentLoaded', () => {
+  // Sluit modals bij klik buiten
+  document.querySelectorAll('.modal-overlay').forEach(o =>
+    o.addEventListener('click', e => { if(e.target===o) o.classList.remove('active'); })
+  );
 
-  // Show iOS install hint if not standalone and not dismissed recently
-  if(!isRunningStandalone()){
-    const dismissed = localStorage.getItem('pwa_dismissed');
-    const iosHint = document.getElementById('ios-install-hint');
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    if(isIOS && iosHint && (!dismissed || Date.now()-parseInt(dismissed) > 3*86400000)){
-      iosHint.style.display='flex';
-    }
+  // Initialiseer app
+  init();
+  scheduleMidnightReset();
+  if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = () => {};
+
+  // Handle URL shortcuts (vanuit manifest shortcuts)
+  const urlParams = new URLSearchParams(window.location.search);
+  const targetScreen = urlParams.get('screen');
+  if (targetScreen) {
+    setTimeout(() => showScreen(targetScreen), 800);
+  }
+
+  // PWA status check
+  if (isRunningStandalone()) {
+    // App draait al als PWA — verberg alle banners
+    console.log('[PWA] Draait in standalone/fullscreen modus ✅');
+    document.getElementById('pwa-install-banner')?.style.setProperty('display','none');
+    document.getElementById('ios-install-hint')?.style.setProperty('display','none');
   } else {
-    // Running as PWA — hide banners
-    const b1=document.getElementById('pwa-install-banner');
-    const b2=document.getElementById('ios-install-hint');
-    if(b1)b1.style.display='none';
-    if(b2)b2.style.display='none';
+    // Draait in browser — toon iOS hint als van toepassing
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !('MSStream' in window);
+    const isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
+    const dismissed = localStorage.getItem('pwa_dismissed');
+    const notDismissedRecently = !dismissed || Date.now() - parseInt(dismissed) > 86400000;
+
+    if (isIOS && isSafari && notDismissedRecently) {
+      const iosHint = document.getElementById('ios-install-hint');
+      if (iosHint) iosHint.style.display = 'flex';
+    }
+    // Android: beforeinstallprompt event handelt de banner af
   }
 });

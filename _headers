@@ -4,10 +4,28 @@
   Referrer-Policy: no-referrer
   Permissions-Policy: geolocation=self, notifications=self
 
+# Service Worker: nooit cachen, altijd verse versie
 /sw.js
   Cache-Control: no-cache, no-store, must-revalidate
-  Service-Worker-Allowed: /
+  Pragma: no-cache
+  Service-Worker-Allowed: /steel-smoke/
 
+# Manifest: NIET cachen zodat display/scope wijzigingen direct werken
 /manifest.json
-  Content-Type: application/manifest+json
-  Cache-Control: public, max-age=86400
+  Content-Type: application/manifest+json; charset=utf-8
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# HTML: altijd vers ophalen
+/index.html
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# App JS: altijd vers
+/app.js
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# Statische assets: lang cachen (bevatten hash in naam)
+/icons/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/style.css
+  Cache-Control: no-cache, no-store, must-revalidate

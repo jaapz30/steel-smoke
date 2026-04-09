@@ -1,85 +1,118 @@
-// ── SERVICE WORKER v5 — Steel & Smoke ────────────────────────
-// Bump CACHE_VERSION om nieuwe versie af te dwingen
-const CACHE_VERSION = 'v12-20260409-2200';
+// ── SERVICE WORKER v6 — Steel & Smoke ────────────────────────
+// KRITISCH: versie bumpen bij elke deploy om cache te forceren
+const CACHE_VERSION = 'v12-20260409-2300';
 const CACHE_NAME = 'steel-smoke-' + CACHE_VERSION;
 
+// Absolute paden — moeten exact overeenkomen met manifest start_url
 const STATIC_ASSETS = [
-  './index.html',
-  './app.js',
-  './style.css',
-  './manifest.json',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
+  '/steel-smoke/index.html',
+  '/steel-smoke/app.js',
+  '/steel-smoke/style.css',
+  '/steel-smoke/manifest.json',
+  '/steel-smoke/icons/icon-192.png',
+  '/steel-smoke/icons/icon-512.png',
 ];
 
-// INSTALL — cache alle assets
+// INSTALL — pre-cache alle kritieke assets
 self.addEventListener('install', e => {
-  console.log('[SW] Installing', CACHE_NAME);
+  console.log('[SW v6] Installing', CACHE_NAME);
   e.waitUntil(
     caches.open(CACHE_NAME).then(cache =>
-      Promise.allSettled(STATIC_ASSETS.map(url => cache.add(url).catch(err => console.warn('[SW] Cache fail:', url, err))))
-    )
+      Promise.allSettled(
+        STATIC_ASSETS.map(url =>
+          cache.add(url).catch(err => console.warn('[SW] Cache fail:', url, err))
+        )
+      )
+    ).then(() => {
+      console.log('[SW v6] All assets cached');
+      return self.skipWaiting(); // activeer direct, wacht niet op tab-sluit
+    })
   );
-  // Activeer meteen zonder wachten op clients die sluiten
-  self.skipWaiting();
 });
 
-// ACTIVATE — verwijder ALLE oude caches
+// ACTIVATE — verwijder ALLE caches behalve huidige versie
 self.addEventListener('activate', e => {
-  console.log('[SW] Activating', CACHE_NAME);
+  console.log('[SW v6] Activating, claiming clients');
   e.waitUntil(
-    caches.keys().then(keys => {
-      return Promise.all(
+    caches.keys().then(keys =>
+      Promise.all(
         keys
           .filter(k => k !== CACHE_NAME)
           .map(k => {
-            console.log('[SW] Deleting old cache:', k);
+            console.log('[SW v6] Deleting old cache:', k);
             return caches.delete(k);
           })
-      );
-    })
+      )
+    ).then(() => self.clients.claim()) // neem direct controle
   );
-  // Neem direct controle over alle open tabs
-  self.clients.claim();
 });
 
-// FETCH — Network First voor HTML (altijd verse versie), Cache First voor rest
+// FETCH — Stale-While-Revalidate voor HTML/JS, Cache-First voor assets
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
 
   const url = new URL(e.request.url);
 
-  // Network-first voor HTML en JS — nooit de cache tonen bij update
-  if (url.pathname.endsWith('.html') || url.pathname === '/' || url.pathname.endsWith('app.js')) {
+  // Sla externe requests over (Leaflet CDN, OpenStreetMap tiles)
+  if (!url.origin.includes('github.io') && !url.hostname.includes('localhost')) {
+    // Laat externe requests gewoon door
+    return;
+  }
+
+  // STRATEGIE: Stale-While-Revalidate voor HTML en JS
+  // → Toont direct cached versie, update op achtergrond
+  // → Geen verouderde cache bij volgende open
+  if (
+    url.pathname.endsWith('.html') ||
+    url.pathname.endsWith('app.js') ||
+    url.pathname === '/steel-smoke/' ||
+    url.pathname === '/steel-smoke'
+  ) {
     e.respondWith(
-      fetch(e.request)
-        .then(res => {
-          if (res && res.status === 200) {
-            const clone = res.clone();
-            caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
-          }
-          return res;
+      caches.open(CACHE_NAME).then(cache =>
+        cache.match(e.request).then(cached => {
+          const networkFetch = fetch(e.request).then(response => {
+            if (response && response.status === 200) {
+              cache.put(e.request, response.clone());
+            }
+            return response;
+          }).catch(() => cached); // offline fallback
+
+          // Geef cache direct terug maar update op achtergrond
+          return cached || networkFetch;
         })
-        .catch(() => caches.match(e.request))
+      )
     );
     return;
   }
 
-  // Cache-first voor alle andere assets (CSS, PNG, fonts)
+  // Cache-First voor CSS, afbeeldingen, fonts
   e.respondWith(
     caches.match(e.request).then(cached => {
       if (cached) return cached;
-      return fetch(e.request).then(res => {
-        if (!res || res.status !== 200 || res.type === 'opaque') return res;
-        const clone = res.clone();
+      return fetch(e.request).then(response => {
+        if (!response || response.status !== 200 || response.type === 'opaque') return response;
+        const clone = response.clone();
         caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
-        return res;
-      }).catch(() => caches.match('./index.html'));
+        return response;
+      }).catch(() => caches.match('/steel-smoke/index.html'));
     })
   );
 });
 
+// Notificatie klik → open app
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  e.waitUntil(clients.openWindow('./'));
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+      // Als app al open is, focus die
+      for (const client of clientList) {
+        if (client.url.includes('/steel-smoke') && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      // Anders open nieuw venster
+      return clients.openWindow('/steel-smoke/');
+    })
+  );
 });

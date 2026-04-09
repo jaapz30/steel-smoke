@@ -2,47 +2,57 @@
   "name": "Steel & Smoke",
   "short_name": "Steel&Smoke",
   "description": "Jouw militaire health coach voor gewicht, conditie en rookvrij leven",
-  "start_url": "/steel-smoke/",
+  "id": "/steel-smoke/",
+  "start_url": "/steel-smoke/index.html",
   "scope": "/steel-smoke/",
   "display": "standalone",
+  "display_override": ["fullscreen", "standalone", "minimal-ui"],
   "orientation": "portrait",
   "background_color": "#0a0a0a",
-  "theme_color": "#c0392b",
+  "theme_color": "#0a0a0a",
   "lang": "nl",
   "prefer_related_applications": false,
   "icons": [
     {
-      "src": "icons/icon-192.png",
+      "src": "/steel-smoke/icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "icons/icon-192.png",
+      "src": "/steel-smoke/icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "icons/icon-512.png",
+      "src": "/steel-smoke/icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "icons/icon-512.png",
+      "src": "/steel-smoke/icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     }
   ],
-  "categories": [
-    "health",
-    "fitness"
-  ],
-  "display_override": [
-    "standalone",
-    "minimal-ui"
-  ],
-  "id": "/steel-smoke/"
+  "categories": ["health", "fitness"],
+  "shortcuts": [
+    {
+      "name": "Eten loggen",
+      "short_name": "Eten",
+      "description": "Direct naar eetschema",
+      "url": "/steel-smoke/index.html?screen=food",
+      "icons": [{"src": "/steel-smoke/icons/icon-192.png", "sizes": "192x192"}]
+    },
+    {
+      "name": "Training starten",
+      "short_name": "Training",
+      "description": "Direct naar training",
+      "url": "/steel-smoke/index.html?screen=training",
+      "icons": [{"src": "/steel-smoke/icons/icon-192.png", "sizes": "192x192"}]
+    }
+  ]
 }

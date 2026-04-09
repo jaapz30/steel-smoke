@@ -2,28 +2,39 @@
 <html lang="nl">
 <head>
   <meta charset="UTF-8">
+  <!-- VIEWPORT — viewport-fit=cover voor edge-to-edge op notch-telefoons -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-  <!-- Theme color — zorgt voor gekleurde statusbalk als PWA -->
+
+  <!-- THEME COLOR — donker zodat statusbalk opgaat in de app -->
   <meta name="theme-color" content="#0a0a0a">
-  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0a0a">
-  <!-- PWA Android Chrome -->
+
+  <!-- ANDROID PWA — verplicht voor installatie -->
   <meta name="mobile-web-app-capable" content="yes">
-  <!-- PWA iOS Safari — verplicht voor standalone modus -->
+
+  <!-- IOS PWA — verplicht voor standalone modus op Safari -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Steel &amp; Smoke">
-  <!-- Apple touch icons — verplicht voor iOS homescreen -->
+
+  <!-- IOS ICONS — zonder dit geen icoon op iOS homescreen -->
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-192.png">
   <link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png">
-  <link rel="apple-touch-icon" sizes="512x512" href="icons/icon-512.png">
-  <!-- Splash colors iOS -->
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <!-- Prevent bounce/overscroll + forceer fullscreen body -->
+
+  <!-- KRITISCH: verhinder dat browser layout de PWA-weergave breekt -->
   <style>
-    html, body { overscroll-behavior: none; height: 100%; }
-    body { position: fixed; width: 100%; overflow: hidden; }
-    #app-root { height: 100vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    /* Prevent elastic scroll / bounce — breekt app-gevoel */
+    html { overscroll-behavior: none; height: 100%; background: #0a0a0a; }
+    body { 
+      overscroll-behavior: none; 
+      min-height: 100%; 
+      background: #0a0a0a;
+      /* Safe area insets voor notch-telefoons */
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    /* Splash screen kleur terwijl app laadt */
+    #app-root { min-height: 100vh; }
   </style>
   <title>Steel &amp; Smoke</title>
   <link rel="manifest" href="manifest.json">
