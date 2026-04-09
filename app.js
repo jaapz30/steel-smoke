@@ -1,5 +1,5 @@
 'use strict';
-// BUILD: 20260409-1200 — v10 FINAL: Leaflet kaarten, zelflerend, records, gym timer fix
+// BUILD: 20260409-1500 — v10.1 PERFECT: next meal fix, gewicht fix, records fix, dag vergelijking fix
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
@@ -613,7 +613,8 @@ async function init() {
   const mealRec     = await db.settings.get('mealSchedule');   state.mealSchedule = mealRec?.value || computeMealSchedule(state.profile?.breakfastTime||'07:00');
   const settRec     = await db.settings.get('appSettings');    if (settRec) state.settings = {...state.settings,...settRec.value};
   const advIdxRec   = await db.settings.get('adviceIndex');    state.todayAdviceIndex = advIdxRec?.value ?? (Math.floor(Date.now()/86400000) % SPORT_ADVICE_POOL.length);
-  state.weightEntries = await db.weights.orderBy('date').toArray();
+  const rawW = await db.weights.orderBy('date').toArray();
+  state.weightEntries = rawW.sort((a,b) => new Date(a.date) - new Date(b.date));
   state.customSports  = await db.customSports.toArray();
   state.savedMeals    = await db.savedMeals.toArray();
   state.customFoods   = await db.customFoods.toArray();
@@ -739,7 +740,8 @@ function goHome() { showScreen('dashboard'); }
 async function updateDashboard() {
   if(!state.profile) return;
   // FIX: herlaad gewichtsdata altijd vers uit DB zodat laatste waarde klopt
-  state.weightEntries = await db.weights.orderBy('date').toArray();
+  const rawW = await db.weights.orderBy('date').toArray();
+  state.weightEntries = rawW.sort((a,b) => new Date(a.date) - new Date(b.date));
   const now=new Date();
   const days=['Zondag','Maandag','Dinsdag','Woensdag','Donderdag','Vrijdag','Zaterdag'];
   const mons=['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'];
@@ -748,15 +750,13 @@ async function updateDashboard() {
   const h=now.getHours();
   set('greeting-text',(h<6?'Goedenacht, ':h<12?'Goedmorgen, ':h<18?'Goedmiddag, ':'Goedenavond, ')+(state.profile.name||'Soldaat')+'!');
   const startW = state.profile.startWeight || state.profile.weight || 115;
-  // FIX: gebruik altijd de meest recente DB-entry als gewicht
-  const currentW = state.weightEntries.length > 0
-    ? state.weightEntries[state.weightEntries.length - 1].weight
-    : (state.profile.weight || startW);
-  // Sync profile.weight met DB als die afwijkt
-  if(state.profile && state.weightEntries.length > 0 &&
-     Math.abs(state.profile.weight - currentW) > 0.05) {
-    state.profile.weight = currentW;
-  }
+  // FIX: sorteer op datum en pak de LAATSTE (meest recente) meting
+  const sortedEntries = [...state.weightEntries].sort((a,b) => new Date(a.date) - new Date(b.date));
+  const currentW = sortedEntries.length > 0
+    ? sortedEntries[sortedEntries.length - 1].weight
+    : (state.profile?.weight || startW);
+  // Sync state voor gebruik door rest van app
+  if (state.profile) state.profile.weight = currentW;
   set('dash-weight-start', startW.toFixed(1));
   set('dash-weight-now', currentW.toFixed(1));
   set('dash-weight-lost', ((startW-currentW)>=0?'-':'+')+Math.abs(startW-currentW).toFixed(1));
@@ -791,54 +791,71 @@ function updateDashSmoke() {
   if(el2) el2.textContent=`€${computeMoneySaved(diff)} bespaard · ${computeCigsNotSmoked(diff)} sigaretten`;
 }
 
-function updateNextMeal() {
-  const el=document.getElementById('dash-next-meal');if(!el||!state.mealSchedule.length)return;
-  // FIX: Gebruik altijd verse data — herververs cache asynchroon dan update
-  refreshFoodCache().then(() => _doUpdateNextMeal(el));
-}
-function _doUpdateNextMeal(el) {
-  const now=new Date(),nowMin=now.getHours()*60+now.getMinutes();
-  let nextIdx=-1,nextTime=null;
-  // Skip momenten die al gegeten zijn (vers uit cache)
-  const eatenIndices=new Set((_todayFoodCache.log||[]).map(e=>e.mealIndex));
-  state.mealSchedule.forEach((t,i)=>{
-    const[h,m]=t.split(':').map(Number);
-    // Toon alleen toekomstige momenten die nog NIET gegeten zijn
-    if(h*60+m>nowMin && nextIdx===-1 && !eatenIndices.has(i)){nextIdx=i;nextTime=t;}
-  });
-  if(nextTime===null){el.textContent='Geen eetmomenten meer vandaag!';return;}
-  const[h,m]=nextTime.split(':').map(Number);
-  const mins=h*60+m-nowMin;
-  const names=['Ontbijt','Tussendoor','Lunch','Tussendoor','Avondeten','Snack'];
-  // Check of er een plan is voor dit moment
-  const today=new Date().toISOString().split('T')[0];
-  db.mealPlans.where({date:today,mealIndex:nextIdx}).first().then(plan=>{
-    let foodLabel, kcalLabel, hint, clickFn;
-    if(plan){
-      // Er is een plan — toon het
-      foodLabel=`<span style="color:var(--green-bright)">📋 ${plan.food}</span>`;
-      kcalLabel=plan.kcal+' kcal gepland · '+plan.protein+'g eiwit';
-      hint='Tik om te bevestigen dat je het gegeten hebt';
-      clickFn=`confirmMealEaten(${nextIdx})`;
-    } else {
-      // Geen plan — toon coach suggestie
-      const adv=getMealNutritionAdvice(nextIdx);
-      const topSugg=adv.suggestions?.[0];
-      foodLabel=topSugg?topSugg.food:(adv.suggestion?.food||'Tik om te plannen of loggen');
-      kcalLabel='~'+adv.mealKcal+' kcal doel · '+adv.mealProtein+'g eiwit';
-      hint='Tik om te plannen of direct te loggen';
-      clickFn=`showScreen('food');openMealModal(${nextIdx})`;
+// updateNextMeal — volledig async, altijd verse DB data
+async function updateNextMeal() {
+  const el = document.getElementById('dash-next-meal');
+  if (!el || !state.mealSchedule.length) return;
+
+  // ALTIJD vers laden uit DB — geen cache-afhankelijkheid
+  const today = new Date().toISOString().split('T')[0];
+  const [freshLog, freshPlans] = await Promise.all([
+    db.foodLog.where('date').equals(today).toArray(),
+    db.mealPlans.where('date').equals(today).toArray(),
+  ]);
+  // Update ook de globale cache
+  _todayFoodCache = { log: freshLog, plans: freshPlans.map(p=>({...p,isPlanned:true})), date: today };
+
+  const now = new Date();
+  const nowMin = now.getHours()*60 + now.getMinutes();
+  const names = ['Ontbijt','Tussendoor','Lunch','Tussendoor','Avondeten','Snack'];
+
+  // Welke momenten zijn al gegeten?
+  const eatenIndices = new Set(freshLog.map(e => e.mealIndex));
+
+  // Zoek eerste toekomstige moment dat NIET al gegeten is
+  let nextIdx = -1, nextTime = null;
+  state.mealSchedule.forEach((t, i) => {
+    const [h, m] = t.split(':').map(Number);
+    if (h*60+m > nowMin && nextIdx === -1 && !eatenIndices.has(i)) {
+      nextIdx = i; nextTime = t;
     }
-    el.innerHTML=`<div style="cursor:pointer;" onclick="${clickFn}">
-      <div style="margin-bottom:4px">
-        <strong style="color:var(--amber);font-family:var(--font-mono)">${nextTime}</strong>
-        <span style="color:var(--steel);font-size:13px"> — over ${mins} min — ${names[nextIdx]}</span>
-      </div>
-      <div style="font-size:13px;color:var(--steel-light);line-height:1.4;margin-bottom:3px">${foodLabel}</div>
-      <div style="font-size:11px;color:var(--steel);font-family:var(--font-mono)">${kcalLabel}</div>
-      <div style="font-size:11px;color:var(--amber);margin-top:3px">👆 ${hint}</div>
-    </div>`;
   });
+
+  if (nextTime === null) {
+    el.innerHTML = '<div style="color:var(--steel);font-size:14px">Geen eetmomenten meer vandaag — goed gedaan! 🎯</div>';
+    return;
+  }
+
+  const [h, m] = nextTime.split(':').map(Number);
+  const minsUntil = h*60+m - nowMin;
+
+  // Check of er een plan is voor dit specifieke moment
+  const plan = freshPlans.find(p => p.mealIndex === nextIdx);
+
+  let foodLabel, kcalLabel, hint, clickFn;
+  if (plan) {
+    foodLabel = `<span style="color:var(--green-bright)">📋 ${plan.food}</span>`;
+    kcalLabel = plan.kcal + ' kcal gepland · ' + plan.protein + 'g eiwit';
+    hint = 'Tik om te bevestigen dat je het gegeten hebt';
+    clickFn = `confirmMealEaten(${nextIdx})`;
+  } else {
+    const adv = getMealNutritionAdvice(nextIdx);
+    const topSugg = adv.suggestions?.[0];
+    foodLabel = topSugg ? topSugg.food : (adv.suggestion?.food || 'Tik om te plannen of loggen');
+    kcalLabel = '~' + adv.mealKcal + ' kcal doel · ' + adv.mealProtein + 'g eiwit';
+    hint = 'Tik om te plannen of direct te loggen';
+    clickFn = `showScreen('food');openMealModal(${nextIdx})`;
+  }
+
+  el.innerHTML = `<div style="cursor:pointer;" onclick="${clickFn}">
+    <div style="margin-bottom:4px">
+      <strong style="color:var(--amber);font-family:var(--font-mono)">${nextTime}</strong>
+      <span style="color:var(--steel);font-size:13px"> — over ${minsUntil} min — ${names[nextIdx]}</span>
+    </div>
+    <div style="font-size:13px;color:var(--steel-light);line-height:1.4;margin-bottom:3px">${foodLabel}</div>
+    <div style="font-size:11px;color:var(--steel);font-family:var(--font-mono)">${kcalLabel}</div>
+    <div style="font-size:11px;color:var(--amber);margin-top:3px">👆 ${hint}</div>
+  </div>`;
 }
 
 // ── BEWEEGVOORTGANG BALK ──────────────────────────────────────
@@ -929,7 +946,9 @@ function checkGymReminder() {
 function drawWeightChart() {
   const canvas=document.getElementById('weight-chart'),emptyEl=document.getElementById('weight-chart-empty');
   if(!canvas)return;
-  const entries=state.weightEntries.slice(-30);
+  // FIX: sorteer altijd op datum zodat meest recent rechts staat
+  const sorted = [...state.weightEntries].sort((a,b) => new Date(a.date) - new Date(b.date));
+  const entries=sorted.slice(-30);
   if(entries.length<2){canvas.style.display='none';if(emptyEl)emptyEl.style.display='block';return;}
   canvas.style.display='block';if(emptyEl)emptyEl.style.display='none';
   const W=canvas.offsetWidth||320,H=100;
@@ -959,9 +978,11 @@ async function renderDayComparison() {
   const yesterday = new Date(today); yesterday.setDate(today.getDate()-1);
   const yesterdayStr = yesterday.toISOString().split('T')[0];
 
-  const [todayTrainings, yesterdayTrainings, todayFood, yesterdayFood] = await Promise.all([
-    db.trainings.where('date').startsWith(todayStr).toArray(),
-    db.trainings.where('date').startsWith(yesterdayStr).toArray(),
+  // Laad alles in één batch en filter in JS voor betrouwbaarheid
+  const allRecent = await db.trainings.toArray();
+  const todayTrainings     = allRecent.filter(t => (t.date||'').startsWith(todayStr));
+  const yesterdayTrainings = allRecent.filter(t => (t.date||'').startsWith(yesterdayStr));
+  const [todayFood, yesterdayFood] = await Promise.all([
     db.foodLog.where('date').equals(todayStr).toArray(),
     db.foodLog.where('date').equals(yesterdayStr).toArray(),
   ]);
@@ -1050,7 +1071,6 @@ function renderWeightTrend() {
 function showWeightModal(){document.getElementById('weight-modal').classList.add('active');renderWeightHistory();}
 function renderWeightHistory(){
   const c=document.getElementById('weight-history');if(!c)return;
-  // FIX: sorteer op datum voor correcte volgorde
   const entries=[...state.weightEntries].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,15);
   if(!entries.length){c.innerHTML='';return;}
   let html='<div style="font-family:var(--font-display);font-size:14px;letter-spacing:1px;color:var(--steel);margin-bottom:8px;">GEWICHTSLOG</div>';
@@ -1065,9 +1085,10 @@ async function logWeight(){
   const w=parseFloat(document.getElementById('weight-input').value);
   if(!w||w<30||w>300){toast('Voer een geldig gewicht in!','error');return;}
   await db.weights.add({date:new Date().toISOString(),weight:w});
-  state.weightEntries=await db.weights.orderBy('date').toArray();
-  // FIX: update profiel gewicht correct en sla direct op
-  if(!state.profile) state.profile = {};
+  // FIX: laad en sorteer entries correct op datum (voorkomt timezone problemen)
+  const rawEntries = await db.weights.orderBy('date').toArray();
+  state.weightEntries = rawEntries.sort((a,b) => new Date(a.date) - new Date(b.date));
+  if (!state.profile) state.profile = {};
   state.profile.weight = w;
   await db.settings.put({key:'profile', value:state.profile});
   document.getElementById('weight-input').value='';
@@ -1843,7 +1864,9 @@ async function planMealEntry(mealIndex, food, kcal, protein, carbs, fat) {
   closeModal('meal-modal'); selectedPresetId = null;
   toast('📋 Gepland voor '+state.mealSchedule[mealIndex]+'!','success');
   vibrate([30,10,30]);
-  showScreen('food'); // terug naar eetschema
+  showScreen('food');
+  // Update dashboard na plannen
+  await updateNextMeal();
 }
 
 // Markeer een gepland maaltijdmoment als GEGETEN (nu)
@@ -1886,12 +1909,12 @@ async function saveMealEntry(mealIndex,food,kcal,protein,carbs,fat){
   // Ververs de daglog cache zodat het volgende advies meteen klopt
   await refreshFoodCache();
 
-  closeModal('meal-modal');selectedPresetId=null;
-  toast('✅ Opgeslagen!','success');vibrate([50,20,50]);
-  // FIX: ververs next meal direct zodat dashboard klopt
+  closeModal('meal-modal'); selectedPresetId = null;
+  toast('✅ Opgeslagen!', 'success'); vibrate([50,20,50]);
   showScreen('dashboard');
-  // Na navigatie cache bijwerken voor correcte weergave
-  setTimeout(()=>{ updateNextMeal(); updateDashboard(); }, 100);
+  // Direct updateNextMeal aanroepen — is nu volledig async en leest verse DB
+  await updateNextMeal();
+  await updateDashboard();
 }
 
 async function getTodayFoodLog(){return db.foodLog.where('date').equals(new Date().toISOString().split('T')[0]).toArray();}
@@ -2567,55 +2590,168 @@ function showPeriod(period,el){
 async function renderProgressScreen() {
   const c = document.getElementById('progress-content');
   if (!c) return;
-  const now = new Date();
-  const periods = [
-    { label:'Week',    days:7  },
-    { label:'Maand',   days:30 },
-    { label:'3 mnd',   days:90 },
-  ];
-  const periodData = await Promise.all(periods.map(async p => {
-    const from = new Date(now); from.setDate(now.getDate()-p.days);
-    const trainings = await db.trainings.where('date').aboveOrEqual(from.toISOString()).toArray();
-    const totalMin = Math.round(trainings.reduce((s,t)=>s+(t.duration||0),0)/60);
-    const totalKcal = trainings.reduce((s,t)=>s+(t.kcal||0),0);
-    return { ...p, totalMin, totalKcal, sessions:trainings.length, avgPerDay:Math.round(totalMin/p.days) };
-  }));
-  const dailyData = [];
-  for(let i=13;i>=0;i--){
-    const d=new Date(now);d.setDate(now.getDate()-i);
-    const ds=d.toISOString().split('T')[0];
-    const ts=await db.trainings.where('date').startsWith(ds).toArray();
-    dailyData.push({day:d.toLocaleDateString('nl-NL',{weekday:'short',day:'numeric'}),min:Math.round(ts.reduce((s,t)=>s+(t.duration||0),0)/60),kcal:ts.reduce((s,t)=>s+(t.kcal||0),0)});
+  c.innerHTML = '<div style="color:var(--steel);padding:20px;text-align:center">📊 Bezig met laden...</div>';
+
+  try {
+    const now = new Date();
+
+    // Laad ALLE trainingen in één keer — filter dan in JS (betrouwbaarder dan DB query)
+    const allTrainings = await db.trainings.toArray();
+
+    // Helper: filter trainingen op datum-range
+    function filterByDays(days) {
+      const cutoff = new Date(now);
+      cutoff.setDate(now.getDate() - days);
+      const cutoffStr = cutoff.toISOString().split('T')[0];
+      return allTrainings.filter(t => {
+        const tDate = (t.date||'').split('T')[0];
+        return tDate >= cutoffStr;
+      });
+    }
+
+    // Helper: datum string voor dag i geleden
+    function dayStr(daysAgo) {
+      const d = new Date(now); d.setDate(now.getDate() - daysAgo);
+      return d.toISOString().split('T')[0];
+    }
+
+    const periods = [
+      { label:'Week',  days:7  },
+      { label:'Maand', days:30 },
+      { label:'3 mnd', days:90 },
+    ];
+
+    const periodData = periods.map(p => {
+      const ts = filterByDays(p.days);
+      const totalMin = Math.round(ts.reduce((s,t)=>s+(t.duration||0),0)/60);
+      const totalKcal = Math.round(ts.reduce((s,t)=>s+(t.kcal||0),0));
+      return { ...p, totalMin, totalKcal, sessions:ts.length, avgPerDay:Math.max(0,Math.round(totalMin/p.days)) };
+    });
+
+    // 14 dagen dagdata
+    const dailyData = [];
+    for (let i=13; i>=0; i--) {
+      const ds = dayStr(i);
+      const ts = allTrainings.filter(t => (t.date||'').startsWith(ds));
+      const min = Math.round(ts.reduce((s,t)=>s+(t.duration||0),0)/60);
+      const kcal = Math.round(ts.reduce((s,t)=>s+(t.kcal||0),0));
+      const d = new Date(now); d.setDate(now.getDate()-i);
+      dailyData.push({
+        day: d.toLocaleDateString('nl-NL',{weekday:'short',day:'numeric'}),
+        min, kcal, isToday: i===0
+      });
+    }
+
+    const maxMin = Math.max(...dailyData.map(d=>d.min), DAILY_MOVE_GOAL_MIN, 1);
+    const allMax = Math.max(...dailyData.map(d=>d.min), 0);
+    const daysHit = dailyData.filter(d=>d.min>=DAILY_MOVE_GOAL_MIN).length;
+
+    // Bereken persoonlijk record ooit
+    const sortedByMin = [...allTrainings].sort((a,b)=>(b.duration||0)-(a.duration||0));
+    const bestSession = sortedByMin[0];
+    const bestMin = bestSession ? Math.round((bestSession.duration||0)/60) : 0;
+
+    // Week records
+    const thisWeekMin = filterByDays(7).reduce((s,t)=>s+(t.duration||0),0)/60;
+    const lastWeekTs  = allTrainings.filter(t=>{const ds=(t.date||'').split('T')[0];return ds>=dayStr(14)&&ds<dayStr(7);});
+    const lastWeekMin = lastWeekTs.reduce((s,t)=>s+(t.duration||0),0)/60;
+
+    let html = `<div style="padding:0 16px 20px">`;
+
+    // Header
+    html += `<div style="font-family:var(--font-display);font-size:18px;letter-spacing:1px;color:var(--red-hot);margin:12px 0 12px">📊 JOUW VOORTGANG</div>`;
+
+    // Periode overzicht
+    html += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">`;
+    periodData.forEach(p => {
+      html += `<div class="stat-block" style="text-align:center;padding:10px 6px">
+        <div style="font-size:11px;color:var(--steel);margin-bottom:4px;text-transform:uppercase">${p.label}</div>
+        <div style="font-family:var(--font-mono);font-size:22px;color:var(--amber)">${p.totalMin}</div>
+        <div style="font-size:10px;color:var(--steel)">min bewogen</div>
+        <div style="font-size:12px;color:var(--green-bright);margin-top:4px;font-weight:700">${p.sessions}× gesport</div>
+        <div style="font-size:10px;color:var(--steel)">${p.avgPerDay} min/dag</div>
+        <div style="font-size:10px;color:var(--amber)">${p.totalKcal} kcal</div>
+      </div>`;
+    });
+    html += `</div>`;
+
+    // Week vs vorige week
+    const weekDiff = Math.round(thisWeekMin - lastWeekMin);
+    const weekColor = weekDiff >= 0 ? 'var(--green-bright)' : 'var(--red-hot)';
+    const weekIcon  = weekDiff >= 0 ? '📈' : '📉';
+    html += `<div class="card card-steel" style="margin-bottom:12px">
+      <div class="card-title">⚡ Deze week vs vorige week</div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <span style="font-size:28px">${weekIcon}</span>
+        <div>
+          <div style="font-family:var(--font-mono);font-size:20px;color:${weekColor}">${weekDiff>=0?'+':''}${weekDiff} min</div>
+          <div style="font-size:12px;color:var(--steel)">Deze week: ${Math.round(thisWeekMin)} min · Vorige week: ${Math.round(lastWeekMin)} min</div>
+        </div>
+      </div>
+    </div>`;
+
+    // Activiteitsgrafiek 14 dagen
+    html += `<div style="font-family:var(--font-display);font-size:13px;letter-spacing:1px;color:var(--steel-light);margin-bottom:8px">ACTIVITEIT LAATSTE 14 DAGEN</div>`;
+    html += `<div style="background:var(--card);border-radius:6px;padding:12px;margin-bottom:14px">`;
+    html += `<div style="display:flex;align-items:flex-end;gap:3px;height:90px;margin-bottom:6px">`;
+    dailyData.forEach(d => {
+      const pct = Math.min(100, Math.round(d.min/maxMin*100));
+      const hit = d.min >= DAILY_MOVE_GOAL_MIN;
+      const bg  = hit ? 'var(--green)' : d.isToday ? 'var(--amber)' : d.min > 0 ? 'var(--steel)' : 'var(--border)';
+      html += `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%" title="${d.day}: ${d.min} min">
+        <div style="width:100%;background:${bg};border-radius:3px 3px 0 0;height:${Math.max(pct, d.min>0?4:0)}%;min-height:${d.min>0?3:0}px;transition:height 0.4s"></div>
+      </div>`;
+    });
+    html += `</div>`;
+    // Dagnamen
+    html += `<div style="display:flex;gap:3px">`;
+    dailyData.forEach(d => {
+      html += `<div style="flex:1;font-size:8px;color:${d.isToday?'var(--amber)':'var(--steel)'};text-align:center;overflow:hidden;text-overflow:clip">${d.day.split(' ')[0]}</div>`;
+    });
+    html += `</div>`;
+    // Legenda
+    html += `<div style="display:flex;gap:12px;margin-top:8px;font-size:10px;color:var(--steel)">
+      <span><span style="color:var(--green)">■</span> Dagdoel ✓</span>
+      <span><span style="color:var(--amber)">■</span> Vandaag</span>
+      <span><span style="color:var(--steel)">■</span> Actief</span>
+    </div>`;
+    html += `</div>`;
+
+    // Records
+    html += `<div class="card card-amber" style="margin-bottom:10px">
+      <div class="card-title">🏆 Records</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div style="text-align:center">
+          <div style="font-size:10px;color:var(--steel);margin-bottom:2px">Beste dag (14 dgn)</div>
+          <div style="font-family:var(--font-mono);font-size:22px;color:var(--amber)">${allMax}</div>
+          <div style="font-size:10px;color:var(--steel)">minuten</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:10px;color:var(--steel);margin-bottom:2px">Langste sessie ooit</div>
+          <div style="font-family:var(--font-mono);font-size:22px;color:var(--amber)">${bestMin}</div>
+          <div style="font-size:10px;color:var(--steel)">minuten</div>
+        </div>
+      </div>
+      ${allMax >= DAILY_MOVE_GOAL_MIN ? `<div style="font-size:12px;color:var(--green-bright);margin-top:8px;text-align:center">💪 Probeer ${allMax+5} min te halen vandaag!</div>` : `<div style="font-size:12px;color:var(--amber);margin-top:8px;text-align:center">🎯 Eerste doel: ${DAILY_MOVE_GOAL_MIN} min in één dag!</div>`}
+    </div>`;
+
+    // Dagdoel streak
+    html += `<div class="card card-green" style="margin-bottom:12px">
+      <div class="card-title">🎯 Dagdoel gehaald</div>
+      <div style="font-family:var(--font-mono);font-size:26px;color:var(--green-bright)">${daysHit} <span style="font-size:16px">/ 14 dagen</span></div>
+      <div class="progress-bar" style="margin-top:8px;height:10px">
+        <div class="progress-fill green" style="width:${Math.round(daysHit/14*100)}%"></div>
+      </div>
+      <div style="font-size:12px;color:var(--steel);margin-top:6px">${daysHit===14?'🔥 Perfect! 14/14 dagen het dagdoel gehaald!':daysHit>=10?'💪 Uitstekend bezig!':daysHit>=5?'👍 Goed bezig — maak de reeks compleet!':'🚀 Elke dag telt — begin vandaag!'}</div>
+    </div>`;
+
+    html += `</div>`;
+    c.innerHTML = html;
+
+  } catch(err) {
+    console.error('renderProgressScreen error:', err);
+    c.innerHTML = `<div style="color:var(--red-hot);padding:20px">Fout bij laden: ${err.message}</div>`;
   }
-  const maxMin=Math.max(...dailyData.map(d=>d.min),DAILY_MOVE_GOAL_MIN,1);
-  let html=`<div style="padding:0 16px">`;
-  html+=`<div style="font-family:var(--font-display);font-size:18px;letter-spacing:1px;color:var(--red-hot);margin:12px 0 10px">📊 JOUW VOORTGANG</div>`;
-  html+=`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">`;
-  periodData.forEach(p=>{
-    html+=`<div class="stat-block" style="text-align:center"><div style="font-size:11px;color:var(--steel);margin-bottom:4px">${p.label}</div><div style="font-family:var(--font-mono);font-size:22px;color:var(--amber)">${p.totalMin}</div><div style="font-size:10px;color:var(--steel)">min totaal</div><div style="font-size:11px;color:var(--green-bright);margin-top:4px">${p.sessions}× gesport</div><div style="font-size:10px;color:var(--steel)">${p.avgPerDay} min/dag</div></div>`;
-  });
-  html+=`</div>`;
-  html+=`<div style="font-family:var(--font-display);font-size:14px;letter-spacing:1px;color:var(--steel-light);margin-bottom:8px">ACTIVITEIT LAATSTE 14 DAGEN</div>`;
-  html+=`<div style="background:var(--card);border-radius:6px;padding:10px;margin-bottom:16px">`;
-  html+=`<div style="display:flex;align-items:flex-end;gap:2px;height:80px">`;
-  dailyData.forEach((d,i)=>{
-    const pct=Math.min(100,Math.round(d.min/maxMin*100));
-    const isToday=i===dailyData.length-1;
-    const hit=d.min>=DAILY_MOVE_GOAL_MIN;
-    html+=`<div style="flex:1;display:flex;flex-direction:column;align-items:center" title="${d.day}: ${d.min} min"><div style="width:100%;background:${hit?'var(--green)':isToday?'var(--amber)':'var(--border)'};border-radius:2px 2px 0 0;height:${Math.max(pct,d.min>0?3:0)}%"></div></div>`;
-  });
-  html+=`</div><div style="display:flex;gap:2px;margin-top:4px">`;
-  dailyData.forEach((d,i)=>{
-    const isToday=i===dailyData.length-1;
-    html+=`<div style="flex:1;font-size:8px;color:${isToday?'var(--amber)':'var(--steel)'};text-align:center">${d.day.split(' ')[0]}</div>`;
-  });
-  html+=`</div></div>`;
-  const allMax=Math.max(...dailyData.map(d=>d.min));
-  const daysHit=dailyData.filter(d=>d.min>=DAILY_MOVE_GOAL_MIN).length;
-  html+=`<div class="card card-amber" style="margin-bottom:10px"><div class="card-title">🏆 Record (14 dgn)</div><div style="font-family:var(--font-mono);font-size:24px;color:var(--amber)">${allMax} min</div><div style="font-size:12px;color:var(--steel);margin-top:2px">Probeer dit te verbeteren!</div></div>`;
-  html+=`<div class="card card-green" style="margin-bottom:12px"><div class="card-title">🎯 Dagdoel gehaald</div><div style="font-family:var(--font-mono);font-size:24px;color:var(--green-bright)">${daysHit}/14 dagen</div><div class="progress-bar" style="margin-top:8px;height:10px"><div class="progress-fill green" style="width:${Math.round(daysHit/14*100)}%"></div></div></div>`;
-  html+=`</div>`;
-  c.innerHTML=html;
 }
 
 async function renderReport(period){
@@ -2625,8 +2761,11 @@ async function renderReport(period){
   else if(period==='week')  startDate.setDate(now.getDate()-7);
   else if(period==='maand') startDate.setDate(now.getDate()-30);
   else startDate=new Date(state.profile?.setupDate||now);
-  const trainings=await db.trainings.where('date').aboveOrEqual(startDate.toISOString()).toArray();
-  const foodLogs=await db.foodLog.where('date').aboveOrEqual(startDate.toISOString().split('T')[0]).toArray();
+  const startDateStr = startDate.toISOString().split('T')[0];
+  const allT = await db.trainings.toArray();
+  const trainings = allT.filter(t => (t.date||'').split('T')[0] >= startDateStr);
+  const allF = await db.foodLog.toArray();
+  const foodLogs = allF.filter(f => (f.date||'') >= startDateStr);
   const totBurned=trainings.reduce((s,t)=>s+(t.kcal||0),0);
   const totEaten=foodLogs.reduce((s,f)=>s+(f.kcal||0),0);
   const totDur=trainings.reduce((s,t)=>s+(t.duration||0),0);
