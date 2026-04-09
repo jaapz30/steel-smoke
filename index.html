@@ -19,6 +19,29 @@
   <title>Steel &amp; Smoke</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
+  <!-- Cache busting -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <!-- Leaflet.js voor echte kaarten (geen API key nodig, OpenStreetMap) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <style>
+    /* Leaflet kaart donker thema */
+    .leaflet-container { background:#1a1a1a !important; }
+    .leaflet-tile { filter: brightness(0.85) saturate(0.9); }
+    /* Fullmap overlay */
+    #fullmap-overlay {
+      position:fixed;inset:0;z-index:10000;background:#000;
+      display:none;flex-direction:column;
+    }
+    #fullmap-overlay.active { display:flex; }
+    #fullmap-header {
+      background:var(--darker);padding:12px 16px;display:flex;
+      align-items:center;justify-content:space-between;
+      border-bottom:1px solid var(--border);
+    }
+    #fullmap-container { flex:1; }
+  </style>
 </head>
 <body>
 
@@ -119,6 +142,12 @@
 
     <div class="card card-green"><div class="card-title">🚭 Rookvrij</div><div id="dash-smoke-status" style="font-family:var(--font-mono);font-size:18px;color:var(--green-bright)">Stel stopmoment in</div><div id="dash-smoke-saved" style="color:var(--steel);font-size:12px;margin-top:4px"></div></div>
     <div class="card card-amber"><div class="card-title">⏰ Volgend Eetmoment</div><div id="dash-next-meal" style="font-size:15px;">Laden...</div></div>
+
+    <!-- Dag vergelijking — gisteren vs vandaag stimulerend -->
+    <div class="card card-steel" style="margin:0 16px 0;">
+      <div class="card-title" style="margin-bottom:6px">📈 Gisteren vs Vandaag</div>
+      <div id="dash-day-comparison"><div style="color:var(--steel);font-size:13px">Laden...</div></div>
+    </div>
 
     <!-- Volgend sportmoment coach -->
     <div class="card card-amber" id="next-sport-card" style="border-left:3px solid var(--amber);">
@@ -247,6 +276,17 @@
     <div style="height:16px;"></div>
   </div>
 
+  <!-- VOORTGANG SCHERM -->
+  <div class="screen" id="screen-progress">
+    <div class="screen-header">
+      <div class="flex-between">
+        <div><h1>VOORTGANG</h1><div class="subtitle">Records &amp; Trends</div></div>
+        <button onclick="goHome()" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--steel);padding:6px 10px;font-size:16px;cursor:pointer;">🏠</button>
+      </div>
+    </div>
+    <div id="progress-content"><div style="color:var(--steel);padding:20px;text-align:center">Laden...</div></div>
+  </div>
+
   <!-- RAPPORT -->
   <div class="screen" id="screen-report">
     <div class="screen-header">
@@ -286,7 +326,7 @@
     <button class="nav-item" onclick="showScreen('food')" data-screen="food"><span class="nav-icon">🍽️</span>Eten</button>
     <button class="nav-item" onclick="showScreen('training')" data-screen="training"><span class="nav-icon">🏋️</span>Training</button>
     <button class="nav-item" onclick="showScreen('smoke')" data-screen="smoke"><span class="nav-icon">🚭</span>Roken</button>
-    <button class="nav-item" onclick="showScreen('report')" data-screen="report"><span class="nav-icon">📊</span>Rapport</button>
+    <button class="nav-item" onclick="showScreen('progress')" data-screen="progress"><span class="nav-icon">📈</span>Records</button>
   </nav>
 </div>
 
@@ -440,6 +480,15 @@
     <div id="drink-modal-content"></div>
     <button class="btn btn-ghost btn-sm mt-8" onclick="closeModal('drink-modal')">Sluiten</button>
   </div>
+</div>
+
+<!-- FULLSCREEN KAART OVERLAY -->
+<div id="fullmap-overlay">
+  <div id="fullmap-header">
+    <div style="font-family:var(--font-display);font-size:16px;letter-spacing:1px;color:var(--white)">🗺️ ROUTE DETAIL</div>
+    <button onclick="closeFullMap()" style="background:var(--red);border:none;color:white;padding:6px 14px;border-radius:4px;font-size:14px;cursor:pointer;font-weight:700;">✕ Sluiten</button>
+  </div>
+  <div id="fullmap-container"></div>
 </div>
 
 <!-- PWA INSTALL BANNER (Android/Chrome) -->
