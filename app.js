@@ -1,5 +1,5 @@
 'use strict';
-// BUILD: 20260408-0910 — v8.1: setup food matrix fix — v7.1 notif action fix — bump to force reload
+// BUILD: 20260408-1030 — v8.2: GPS distance fix, kcal realistisch, gewicht bug fix — v7.1 notif action fix — bump to force reload
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
@@ -127,14 +127,19 @@ const GYM_ACTIVITIES = [
   {id:'zwemmen',  emoji:'🏊', name:'Zwemmen',      met:8.0},
 ];
 
+// MET-waarden gecorrigeerd voor realistische calorieverbranding bij ~115kg
+// Wandelen rustig 4km/u: ~3.5 MET → 217 kcal/uur bij 115kg
+// Wandelen stevig 5-6km/u: ~5.0 MET → 310 kcal/uur bij 115kg
+// E-bike turbo (veel hulp): ~3.0 MET → 186 kcal/uur
+// E-bike eco (weinig hulp): ~5.5 MET → 341 kcal/uur
 const GPS_ACTIVITIES = [
-  {id:'wandelen_rustig',  emoji:'🚶', name:'Wandelen rustig',   met:2.8, kcalPer30min:98,  intensiteit:1, doel:'Ontspanning & herstel'},
-  {id:'wandelen_stevig',  emoji:'🚶', name:'Wandelen stevig',   met:3.8, kcalPer30min:133, intensiteit:2, doel:'Conditie & vetverbranding'},
-  {id:'ebike_turbo',      emoji:'⚡', name:'E-bike turbo',      met:3.0, kcalPer30min:105, intensiteit:1, doel:'Ontspannen, veel ondersteuning'},
-  {id:'ebike_sport',      emoji:'⚡', name:'E-bike sport',      met:3.8, kcalPer30min:133, intensiteit:2, doel:'Actief, matige ondersteuning'},
-  {id:'ebike_tour',       emoji:'⚡', name:'E-bike tour',       met:4.5, kcalPer30min:158, intensiteit:3, doel:'Intensief, weinig ondersteuning'},
-  {id:'ebike_eco',        emoji:'⚡', name:'E-bike eco',        met:5.5, kcalPer30min:193, intensiteit:4, doel:'Maximaal, bijna geen ondersteuning'},
-  {id:'scooter',          emoji:'🛵', name:'Scooter',           met:2.0, kcalPer30min:70,  intensiteit:0, doel:'Vervoer'},
+  {id:'wandelen_rustig',  emoji:'🚶', name:'Wandelen rustig',   met:3.5, kcalPer30min:109, intensiteit:1, doel:'Ontspanning & herstel'},
+  {id:'wandelen_stevig',  emoji:'🚶', name:'Wandelen stevig',   met:5.0, kcalPer30min:155, intensiteit:2, doel:'Conditie & vetverbranding'},
+  {id:'ebike_turbo',      emoji:'⚡', name:'E-bike turbo',      met:3.0, kcalPer30min:93,  intensiteit:1, doel:'Ontspannen, veel ondersteuning'},
+  {id:'ebike_sport',      emoji:'⚡', name:'E-bike sport',      met:4.0, kcalPer30min:124, intensiteit:2, doel:'Actief, matige ondersteuning'},
+  {id:'ebike_tour',       emoji:'⚡', name:'E-bike tour',       met:4.8, kcalPer30min:149, intensiteit:3, doel:'Intensief, weinig ondersteuning'},
+  {id:'ebike_eco',        emoji:'⚡', name:'E-bike eco',        met:5.5, kcalPer30min:171, intensiteit:4, doel:'Maximaal, bijna geen ondersteuning'},
+  {id:'scooter',          emoji:'🛵', name:'Scooter',           met:2.0, kcalPer30min:62,  intensiteit:0, doel:'Vervoer'},
 ];
 
 const HEALTH_MILESTONES = [
@@ -702,12 +707,20 @@ async function updateDashboard() {
   set('dash-date',`${days[now.getDay()]} ${now.getDate()} ${mons[now.getMonth()]}`);
   const h=now.getHours();
   set('greeting-text',(h<6?'Goedenacht, ':h<12?'Goedmorgen, ':h<18?'Goedmiddag, ':'Goedenavond, ')+(state.profile.name||'Soldaat')+'!');
-  const startW=state.profile.startWeight||state.profile.weight||115;
-  const currentW=state.weightEntries.length>0?state.weightEntries[state.weightEntries.length-1].weight:startW;
-  set('dash-weight-start',startW.toFixed(1));
-  set('dash-weight-now',currentW.toFixed(1));
-  set('dash-weight-lost',((startW-currentW)>=0?'-':'+')+Math.abs(startW-currentW).toFixed(1));
-  set('dash-bmi',(currentW/Math.pow((state.profile.height||178)/100,2)).toFixed(1));
+  const startW = state.profile.startWeight || state.profile.weight || 115;
+  // FIX: gebruik altijd de meest recente DB-entry als gewicht
+  const currentW = state.weightEntries.length > 0
+    ? state.weightEntries[state.weightEntries.length - 1].weight
+    : (state.profile.weight || startW);
+  // Sync profile.weight met DB als die afwijkt
+  if(state.profile && state.weightEntries.length > 0 &&
+     Math.abs(state.profile.weight - currentW) > 0.05) {
+    state.profile.weight = currentW;
+  }
+  set('dash-weight-start', startW.toFixed(1));
+  set('dash-weight-now', currentW.toFixed(1));
+  set('dash-weight-lost', ((startW-currentW)>=0?'-':'+')+Math.abs(startW-currentW).toFixed(1));
+  set('dash-bmi', (currentW/Math.pow((state.profile.height||178)/100,2)).toFixed(1));
   set('dash-streak',`🔥 ${await computeStreak()} dagen`);
   const log=await getTodayFoodLog();
   const eaten=log.reduce((s,e)=>s+(e.kcal||0),0);
@@ -789,7 +802,7 @@ async function updateMovementBar() {
   if(el) el.style.width=pct+'%';
   if(lbl) lbl.textContent=`${totalMin}/${DAILY_MOVE_GOAL_MIN} min bewogen`;
   if(status) {
-    if(pct>=100) { status.textContent='✅ Daaldoel gehaald!'; status.style.color='var(--green-bright)'; }
+    if(pct>=100) { status.textContent='✅ Dagdoel gehaald!'; status.style.color='var(--green-bright)'; }
     else         { status.textContent=`Nog ${DAILY_MOVE_GOAL_MIN-totalMin} min te gaan`; status.style.color='var(--steel)'; }
   }
   // Color coding
@@ -910,7 +923,8 @@ function renderWeightTrend() {
 function showWeightModal(){document.getElementById('weight-modal').classList.add('active');renderWeightHistory();}
 function renderWeightHistory(){
   const c=document.getElementById('weight-history');if(!c)return;
-  const entries=[...state.weightEntries].reverse().slice(0,15);
+  // FIX: sorteer op datum voor correcte volgorde
+  const entries=[...state.weightEntries].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,15);
   if(!entries.length){c.innerHTML='';return;}
   let html='<div style="font-family:var(--font-display);font-size:14px;letter-spacing:1px;color:var(--steel);margin-bottom:8px;">GEWICHTSLOG</div>';
   entries.forEach((e,i)=>{
@@ -1844,7 +1858,27 @@ function toggleTimerPause(){
 async function stopTraining(){
   if(!state.activeTraining)return;
   const elapsed=(Date.now()-state.activeTraining.startTime-(state.timerPausedTotal||0))/1000;
-  const kcal=Math.round(state.activeTraining.met*(state.profile?.weight||115)*(elapsed/3600)*1.05);
+  const w = state.profile?.weight || 115;
+  const met = state.activeTraining.met || 3.5;
+  let kcal;
+  // GPS-activiteit: gebruik afstandsgebaseerde berekening als beschikbaar
+  if(state.activeTraining.type==='gps' && state.gpsDistance > 0.1) {
+    const elapsedH = elapsed / 3600;
+    // Bereken werkelijke snelheid
+    const actualSpeedKmh = state.gpsDistance / elapsedH;
+    let effectiveMet = met;
+    // Correctie: als werkelijke snelheid afwijkt van verwachte MET
+    if(actualSpeedKmh > 1) {
+      const speedMperMin = actualSpeedKmh * 1000 / 60;
+      if(met < 5.5) { // wandelen/licht fietsen
+        effectiveMet = Math.max(met * 0.8, Math.min(met * 1.4, 0.1 * speedMperMin + 3.5));
+      }
+    }
+    kcal = Math.round(effectiveMet * w * elapsedH * 1.05);
+  } else {
+    // Tijdgebaseerd (gym of GPS zonder voldoende afstand)
+    kcal = Math.round(met * w * (elapsed/3600) * 1.05);
+  }
   await db.trainings.add({date:new Date().toISOString(),time:state.activeTraining.startTimeStr||new Date().toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'}),type:state.activeTraining.type||'gym',name:state.activeTraining.name,duration:Math.round(elapsed),kcal,met:state.activeTraining.met,distance:state.activeTraining.distance||null});
   toast(`✅ ${state.activeTraining.name}: ${formatSeconds(elapsed)} · ${kcal} kcal!`,'success');
   if(state.settings.sound)speak(`Sessie complete. ${kcal} calorieën verbrand. Sterk!`);
@@ -1998,16 +2032,67 @@ function startGPS(activityId){
 }
 function onGPSPos(pos){
   const{latitude:lat,longitude:lng,speed,accuracy}=pos.coords;
-  document.getElementById('gps-status').textContent=`acc: ${Math.round(accuracy)}m`;
-  if(state.gpsLastPos&&accuracy<60){const d=haversine(state.gpsLastPos.lat,state.gpsLastPos.lng,lat,lng);if(d>0.003)state.gpsDistance+=d;}
-  state.gpsLastPos={lat,lng};state.gpsPositions.push({lat,lng,t:Date.now()});
-  const kmh=speed?speed*3.6:computeSpeed();
-  document.getElementById('gps-distance').textContent=state.gpsDistance.toFixed(2);
-  document.getElementById('gps-speed').textContent=kmh.toFixed(1);
-  const elapsed=(Date.now()-state.gpsStartTime)/3600000;
-  const met=state.activeTraining?.met||3.5;
-  document.getElementById('gps-kcal').textContent=Math.round(met*(state.profile?.weight||115)*elapsed*1.05);
-  if(state.activeTraining)state.activeTraining.distance=state.gpsDistance;
+  const statusEl=document.getElementById('gps-status');
+  if(statusEl) statusEl.textContent=`acc: ${Math.round(accuracy)}m`;
+
+  const now=Date.now();
+  // Sla altijd punt op voor snelheidsberekening (ongeacht accuracy)
+  state.gpsPositions.push({lat,lng,t:now,acc:accuracy});
+
+  // Afstand berekenen: gebruik ruimere accuracy drempel (120m ipv 60m)
+  // En kleinere minimum-stap (1m ipv 3m) om wandelen correct te meten
+  if(state.gpsLastPos && accuracy < 120) {
+    const d = haversine(state.gpsLastPos.lat, state.gpsLastPos.lng, lat, lng);
+    // Minimum 0.001 km (1 meter) — voorkomt GPS-jitter maar vangt kleine stappen wel op
+    // Maximum 0.2 km per update — voorkomt GPS-sprongen
+    if(d > 0.001 && d < 0.2) {
+      state.gpsDistance += d;
+    }
+  }
+  state.gpsLastPos = {lat, lng, t:now};
+
+  // Snelheid: gebruik device speed als beschikbaar, anders bereken uit laatste 2 punten
+  let kmh = 0;
+  if(speed && speed > 0) {
+    kmh = speed * 3.6;
+  } else {
+    kmh = computeSpeed();
+  }
+
+  const elapsed = (now - state.gpsStartTime) / 3600000; // uren
+  const met = state.activeTraining?.met || 3.5;
+  const w = state.profile?.weight || 115;
+
+  // Calorieën: als we genoeg GPS-afstand hebben, gebruik afstandsgebaseerde berekening
+  // anders tijdgebaseerde (MET-formule)
+  let kcal;
+  if(state.gpsDistance > 0.05) {
+    // Afstandsgebaseerd is nauwkeuriger: MET × gewicht × tijd (uren)
+    // Maar corrigeer MET op basis van werkelijke snelheid als die bekend is
+    const actualSpeed = elapsed > 0 ? state.gpsDistance / elapsed : 0; // km/u
+    let effectiveMet = met;
+    if(actualSpeed > 0.5) {
+      // Pas MET aan op werkelijke snelheid voor wandelen
+      // Formule: MET ≈ 0.1 × snelheid(m/min) + 3.5 voor wandelen
+      const speedMperMin = actualSpeed * 1000 / 60;
+      if(met < 5) { // wandelen/e-bike
+        effectiveMet = Math.max(met * 0.7, Math.min(met * 1.5, 0.1 * speedMperMin + 3.5));
+      }
+    }
+    kcal = Math.round(effectiveMet * w * elapsed * 1.05);
+  } else {
+    // Nog niet genoeg GPS-data: tijdgebaseerd
+    kcal = Math.round(met * w * elapsed * 1.05);
+  }
+
+  const distEl=document.getElementById('gps-distance');
+  if(distEl) distEl.textContent=state.gpsDistance.toFixed(2);
+  const spdEl=document.getElementById('gps-speed');
+  if(spdEl) spdEl.textContent=kmh.toFixed(1);
+  const kcalEl=document.getElementById('gps-kcal');
+  if(kcalEl) kcalEl.textContent=kcal;
+
+  if(state.activeTraining) state.activeTraining.distance = state.gpsDistance;
 }
 function onGPSErr(err){document.getElementById('gps-status').textContent='Fout: '+err.message;toast('GPS fout — check permissie','error');}
 function computeSpeed(){const p=state.gpsPositions;if(p.length<2)return 0;const a=p[p.length-2],b=p[p.length-1];const d=haversine(a.lat,a.lng,b.lat,b.lng);const t=(b.t-a.t)/3600000;return t>0?d/t:0;}
