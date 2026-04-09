@@ -1,5 +1,5 @@
 'use strict';
-// BUILD: 20260409-2000 — v11.2: advies-cache, geen verspringen, coach per tijdvak
+// BUILD: 20260409-2200 — v12: dagmenu systeem, favorietenmenu, fullscreen fix
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
@@ -14,6 +14,8 @@ db.version(4).stores({ settings:'key', weights:'++id,date', meals:'++id,date', t
 db.version(5).stores({ settings:'key', weights:'++id,date', meals:'++id,date', trainings:'++id,date,time', gpsRoutes:'++id,date', foodLog:'++id,date', customSports:'++id', customMenus:'++id', savedMeals:'++id', customFoods:'++id' });
 // v6: aparte tabel voor maaltijdplannen (gepland ≠ gegeten)
 db.version(6).stores({ settings:'key', weights:'++id,date', meals:'++id,date', trainings:'++id,date,time', gpsRoutes:'++id,date', foodLog:'++id,date', customSports:'++id', customMenus:'++id', savedMeals:'++id', customFoods:'++id', mealPlans:'++id,date,mealIndex' });
+// v7: favorietenmenu per eetmoment + dagmenu cache
+db.version(7).stores({ settings:'key', weights:'++id,date', meals:'++id,date', trainings:'++id,date,time', gpsRoutes:'++id,date', foodLog:'++id,date', customSports:'++id', customMenus:'++id', savedMeals:'++id', customFoods:'++id', mealPlans:'++id,date,mealIndex', menuFavorites:'++id,mealIndex' });
 
 // ── VASTE VOEDINGSMIDDELEN ────────────────────────────────────
 const FOODS_BUILTIN = [
@@ -70,6 +72,210 @@ const PRESET_MENUS = [
   {id:'proteinesha_ban', emoji:'🥤🍌', name:'Proteïneshake + banaan',    kcal:219, protein:26, carbs:28, fat:2,  items:'1 shake + 1 banaan'},
   {id:'griekseyo_fruit', emoji:'🥣🍓', name:'Griekse yoghurt met fruit', kcal:270, protein:20, carbs:36, fat:10, items:'200g yoghurt + kiwi + banaan + honing'},
 ];
+
+
+// ══════════════════════════════════════════════════════════════
+//  DAGMENU SYSTEEM — afwisselend, gepersonaliseerd, lerend
+// ══════════════════════════════════════════════════════════════
+
+// Vaste menuopties per eetmoment — basis voor dagmenu-generator
+// focusNutrient: wat dit item bijdraagt ('protein','carbs','fat','fiber','vitamins')
+const MENU_OPTIONS = {
+  0: [ // ONTBIJT
+    {id:'ob01', food:'🍞🧀 3× volkoren + kaas + boter',        kcal:465, protein:24, carbs:48, fat:19, focusNutrient:'protein'},
+    {id:'ob02', food:'🌾🍌 Havermout + banaan + kwark',         kcal:390, protein:22, carbs:62, fat:5,  focusNutrient:'carbs'},
+    {id:'ob03', food:'🍳🍞 Roerei (2 ei) + 2× volkoren',        kcal:345, protein:18, carbs:30, fat:15, focusNutrient:'protein'},
+    {id:'ob04', food:'🥣🍓 Griekse yoghurt + fruit + honing',   kcal:270, protein:20, carbs:36, fat:10, focusNutrient:'protein'},
+    {id:'ob05', food:'🥛🍌 Kwark (200g) + banaan + noten',      kcal:340, protein:28, carbs:32, fat:10, focusNutrient:'protein'},
+    {id:'ob06', food:'🍞🥜 2× volkoren + pindakaas + banaan',   kcal:380, protein:12, carbs:52, fat:16, focusNutrient:'carbs'},
+    {id:'ob07', food:'🌾🥛 Havermout + magere melk + appel',    kcal:310, protein:14, carbs:56, fat:4,  focusNutrient:'fiber'},
+    {id:'ob08', food:'🥚🍞 Scrambled eggs (3) + volkoren',      kcal:400, protein:24, carbs:28, fat:18, focusNutrient:'protein'},
+  ],
+  1: [ // TUSSENDOOR OCHTEND
+    {id:'td01', food:'🥛 Magere kwark (150g)',                  kcal:86,  protein:15, carbs:6,  fat:0,  focusNutrient:'protein'},
+    {id:'td02', food:'🍎🥜 Appel + 20g noten',                  kcal:172, protein:4,  carbs:23, fat:9,  focusNutrient:'fiber'},
+    {id:'td03', food:'🍌 Banaan',                               kcal:89,  protein:1,  carbs:23, fat:0,  focusNutrient:'carbs'},
+    {id:'td04', food:'🥤 Proteïneshake',                        kcal:130, protein:25, carbs:5,  fat:2,  focusNutrient:'protein'},
+    {id:'td05', food:'🧀🍎 Cottage cheese + appel',             kcal:155, protein:12, carbs:17, fat:5,  focusNutrient:'protein'},
+    {id:'td06', food:'🥣 Griekse yoghurt (150g) + kiwi',        kcal:193, protein:14, carbs:22, fat:7,  focusNutrient:'protein'},
+    {id:'td07', food:'🍳 2 gekookte eieren',                    kcal:156, protein:12, carbs:1,  fat:10, focusNutrient:'protein'},
+  ],
+  2: [ // LUNCH
+    {id:'lu01', food:'🍞🐠 3× volkoren + tonijn + salade',      kcal:420, protein:35, carbs:44, fat:9,  focusNutrient:'protein'},
+    {id:'lu02', food:'🍗🥗 Kip (150g) + groenten + olijfolie',  kcal:380, protein:38, carbs:15, fat:18, focusNutrient:'protein'},
+    {id:'lu03', food:'🍞🥚 2× volkoren + 2 eieren + tomaat',    kcal:320, protein:20, carbs:30, fat:12, focusNutrient:'protein'},
+    {id:'lu04', food:'🥗🧀 Grote salade + kaas + volkoren',     kcal:360, protein:18, carbs:32, fat:14, focusNutrient:'vitamins'},
+    {id:'lu05', food:'🍞🦃 4× volkoren + kalkoen + sla',        kcal:440, protein:36, carbs:48, fat:10, focusNutrient:'protein'},
+    {id:'lu06', food:'🐟🥔 Tonijnsalade + aardappelen',         kcal:400, protein:32, carbs:40, fat:8,  focusNutrient:'protein'},
+    {id:'lu07', food:'🫘🥦 Witte bonen + groenten + brood',     kcal:380, protein:20, carbs:54, fat:6,  focusNutrient:'fiber'},
+    {id:'lu08', food:'🍞🥩 3× volkoren + mager vlees + groenten',kcal:450,protein:32, carbs:46, fat:12, focusNutrient:'protein'},
+  ],
+  3: [ // TUSSENDOOR MIDDAG
+    {id:'tm01', food:'🧀🥒 Cottage cheese + komkommer',         kcal:118, protein:12, carbs:5,  fat:5,  focusNutrient:'protein'},
+    {id:'tm02', food:'🥜🍞 Pindakaas op 1× volkoren',           kcal:180, protein:6,  carbs:17, fat:10, focusNutrient:'fat'},
+    {id:'tm03', food:'🍊🥜 Sinaasappel + handje noten',         kcal:152, protein:4,  carbs:22, fat:7,  focusNutrient:'vitamins'},
+    {id:'tm04', food:'🥤 Proteïneshake',                        kcal:130, protein:25, carbs:5,  fat:2,  focusNutrient:'protein'},
+    {id:'tm05', food:'🥣 Griekse yoghurt (150g)',               kcal:146, protein:14, carbs:6,  fat:7,  focusNutrient:'protein'},
+    {id:'tm06', food:'🥛 Magere kwark (150g) + kiwi',           kcal:148, protein:15, carbs:14, fat:1,  focusNutrient:'protein'},
+    {id:'tm07', food:'🍌🥛 Banaan + magere melk (200ml)',        kcal:159, protein:8,  carbs:30, fat:0,  focusNutrient:'carbs'},
+  ],
+  4: [ // DINER
+    {id:'av01', food:'🍗🍚🥦 Kip + rijst + broccoli',           kcal:445, protein:53, carbs:46, fat:7,  focusNutrient:'protein'},
+    {id:'av02', food:'🐟🥔 Zalm + aardappelen + groenten',      kcal:520, protein:36, carbs:44, fat:20, focusNutrient:'protein'},
+    {id:'av03', food:'🥩🍚🥬 Rundvlees + rijst + spinazie',     kcal:480, protein:42, carbs:38, fat:14, focusNutrient:'protein'},
+    {id:'av04', food:'🫘🍗🥦 Witte bonen + kip + groenten',     kcal:420, protein:45, carbs:38, fat:8,  focusNutrient:'protein'},
+    {id:'av05', food:'🍳🥦 Omelet (3 ei) + groenten + brood',   kcal:380, protein:28, carbs:20, fat:20, focusNutrient:'protein'},
+    {id:'av06', food:'🐠🥔🥦 Tonijn + aardappelen + broccoli',  kcal:400, protein:38, carbs:38, fat:8,  focusNutrient:'protein'},
+    {id:'av07', food:'🦃🍚🥕 Kalkoen + rijst + wortel',         kcal:440, protein:48, carbs:40, fat:8,  focusNutrient:'protein'},
+    {id:'av08', food:'🥩🥔🥬 Mager vlees + aardappel + sla',    kcal:460, protein:38, carbs:36, fat:15, focusNutrient:'protein'},
+  ],
+  5: [ // SNACK AVOND
+    {id:'sn01', food:'🥛 Magere kwark (200g)',                  kcal:114, protein:20, carbs:8,  fat:0,  focusNutrient:'protein'},
+    {id:'sn02', food:'🍎 Appel of peer',                        kcal:75,  protein:0,  carbs:19, fat:0,  focusNutrient:'fiber'},
+    {id:'sn03', food:'🥣🥝 Griekse yoghurt (150g) + kiwi',      kcal:193, protein:15, carbs:22, fat:7,  focusNutrient:'protein'},
+    {id:'sn04', food:'🧀 Cottage cheese (100g)',                kcal:103, protein:11, carbs:3,  fat:5,  focusNutrient:'protein'},
+    {id:'sn05', food:'🥤 Proteïneshake (half)',                 kcal:65,  protein:12, carbs:3,  fat:1,  focusNutrient:'protein'},
+    {id:'sn06', food:'🍌🥛 Banaan + 100ml magere melk',         kcal:124, protein:5,  carbs:26, fat:0,  focusNutrient:'carbs'},
+  ],
+};
+
+// ── DAGMENU GENERATOR ─────────────────────────────────────────
+// Genereert per dag een uniek menu op basis van:
+// 1. Jouw favorietenlijst (hoogste prioriteit)
+// 2. Macro-doelen (eiwit 1.6g/kg, afval-kcal = BMR-400)
+// 3. Variatie t.o.v. gisteren
+// 4. Wat je eerder lekker vond (foodFrequency)
+
+async function generateDailyMenu(dateStr) {
+  const targets = getDailyTargets();
+  const afvalKcal = Math.max(1400, targets.kcal - 400); // ~0.4kg/week afval
+
+  // Laad favorieten per eetmoment
+  const favRec = await db.settings.get('menuFavoriteIds');
+  const favorites = favRec?.value || {}; // {0: ['ob01','ob03'], 1: ['td01'], ...}
+
+  // Laad gisteren's menu voor variatie
+  const yesterday = new Date(dateStr);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yestKey = 'dailyMenu_' + yesterday.toISOString().split('T')[0];
+  const yestRec = await db.settings.get(yestKey);
+  const yestMenu = yestRec?.value || {};
+
+  // Laad frequentie voor zelflerend systeem
+  const freqRec = await db.settings.get('menuItemFrequency');
+  const freq = freqRec?.value || {}; // {ob01: 5, lu02: 3, ...}
+
+  const menu = {};
+  // Doelen per eetmoment (als % van dagdoel)
+  const distributions = [0.20, 0.08, 0.25, 0.08, 0.28, 0.11];
+
+  for (let mealIdx = 0; mealIdx < 6; mealIdx++) {
+    const options = MENU_OPTIONS[mealIdx] || [];
+    const targetKcal = Math.round(afvalKcal * distributions[mealIdx]);
+    const favIds = favorites[mealIdx] || [];
+    const yesterdayId = yestMenu[mealIdx]?.id;
+
+    // Score elke optie
+    const scored = options.map(opt => {
+      let score = 100;
+      // Bonus als het een favoriet is
+      if (favIds.includes(opt.id)) score += 50;
+      // Bonus op basis van hoe vaak eerder gekozen
+      score += (freq[opt.id] || 0) * 10;
+      // Malus als gisteren hetzelfde was (variatie!)
+      if (opt.id === yesterdayId) score -= 60;
+      // Bonus als kcal goed matcht
+      const kcalDiff = Math.abs(opt.kcal - targetKcal);
+      score += Math.max(0, 40 - kcalDiff * 0.2);
+      // Bonus voor eiwitrijke opties (doel: afvallen + spierbehoud)
+      score += opt.protein * 1.5;
+      // Kleine willekeurige variatie per dag (dag-hash)
+      const dayHash = dateStr.split('-').reduce((s,n)=>s+parseInt(n),0);
+      score += ((dayHash + mealIdx * 7 + opt.id.charCodeAt(3)) % 20);
+      return { ...opt, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    menu[mealIdx] = scored[0];
+  }
+
+  // Sla menu op voor vandaag
+  await db.settings.put({ key: 'dailyMenu_' + dateStr, value: menu });
+  return menu;
+}
+
+// Haal het menu op voor vandaag (genereer als niet bestaat)
+async function getTodayMenu() {
+  const today = new Date().toISOString().split('T')[0];
+  const rec = await db.settings.get('dailyMenu_' + today);
+  if (rec?.value && Object.keys(rec.value).length === 6) return rec.value;
+  return generateDailyMenu(today);
+}
+
+// Markeer een menu-item als gegeten (verhoogt frequentie-score)
+async function markMenuItemEaten(itemId) {
+  if (!itemId) return;
+  const rec = await db.settings.get('menuItemFrequency');
+  const freq = rec?.value || {};
+  freq[itemId] = (freq[itemId] || 0) + 1;
+  await db.settings.put({ key: 'menuItemFrequency', value: freq });
+}
+
+// Vervang een menu-item door alternatief uit favorietenlijst
+async function replaceMenuItemForMeal(mealIndex) {
+  const today = new Date().toISOString().split('T')[0];
+  const rec = await db.settings.get('dailyMenu_' + today);
+  const menu = rec?.value || await generateDailyMenu(today);
+  const current = menu[mealIndex];
+  const options = MENU_OPTIONS[mealIndex] || [];
+
+  // Kies volgende optie (niet de huidige)
+  const favRec = await db.settings.get('menuFavoriteIds');
+  const favIds = (favRec?.value || {})[mealIndex] || [];
+
+  const alternatives = options.filter(o => o.id !== current?.id);
+  // Sorteer op favoriet-status
+  alternatives.sort((a,b) => {
+    const aFav = favIds.includes(a.id) ? 1 : 0;
+    const bFav = favIds.includes(b.id) ? 1 : 0;
+    return bFav - aFav;
+  });
+
+  if (alternatives.length === 0) { toast('Geen alternatieven beschikbaar', ''); return; }
+
+  // Kies wisselend (niet steeds dezelfde alternatief)
+  const state_key = '_menuReplaceIdx_' + mealIndex;
+  state[state_key] = ((state[state_key] || 0) + 1) % alternatives.length;
+  menu[mealIndex] = alternatives[state[state_key]];
+
+  await db.settings.put({ key: 'dailyMenu_' + today, value: menu });
+  toast('↺ Vervangen door: ' + menu[mealIndex].food.split(' ').slice(0,3).join(' '), 'success');
+  vibrate(15);
+  await renderMealSlots();
+}
+
+// ── FAVORIETENMENU BEHEER ──────────────────────────────────────
+async function getFavoriteMenuIds() {
+  const rec = await db.settings.get('menuFavoriteIds');
+  return rec?.value || {};
+}
+
+async function toggleMenuFavorite(mealIndex, itemId) {
+  const rec = await db.settings.get('menuFavoriteIds');
+  const favs = rec?.value || {};
+  if (!favs[mealIndex]) favs[mealIndex] = [];
+  const idx = favs[mealIndex].indexOf(itemId);
+  if (idx === -1) {
+    favs[mealIndex].push(itemId);
+    toast('⭐ Toegevoegd aan favorieten!', 'success');
+  } else {
+    favs[mealIndex].splice(idx, 1);
+    toast('Verwijderd uit favorieten', '');
+  }
+  await db.settings.put({ key: 'menuFavoriteIds', value: favs });
+  vibrate(15);
+  return favs[mealIndex].includes(itemId);
+}
 
 // ── SPORTADVIES BIBLIOTHEEK — 50 gevarieerde adviezen ────────
 // Elk advies heeft een unieke id voor variatie-tracking (zelflerend)
@@ -759,7 +965,7 @@ function showScreen(name) {
   if(name==='report')    renderReport(state.activePeriod);
   if(name==='progress')  renderProgressScreen();
   if(name==='training')  { renderRecentTrainings(); renderDailyAdvice(); }
-  if(name==='settings')  renderSettings();
+  if(name==='settings')  { renderSettings(); setTimeout(renderMenuFavorites, 150); }
   vibrate(20);
 }
 function goHome() { showScreen('dashboard'); }
@@ -1533,57 +1739,66 @@ async function renderMealSlots(){
   await refreshFoodCache();
   const todayLog = _todayFoodCache.log;
   const todayPlans = await getTodayMealPlans();
+  // Haal het dagmenu op (gecached of nieuw gegenereerd)
+  const todayMenu = await getTodayMenu();
   const now=new Date(),nowMin=now.getHours()*60+now.getMinutes();
   const names=['Ontbijt','Tussendoor','Lunch','Tussendoor','Avondeten','Snack'];
   let html='';
 
   state.mealSchedule.forEach((time,i)=>{
     const[h,m]=time.split(':').map(Number),mealMin=h*60+m;
-    const eaten  = todayLog.find(e=>e.mealIndex===i);
+    const eaten   = todayLog.find(e=>e.mealIndex===i);
     const planned = todayPlans.find(p=>p.mealIndex===i);
-    const isNow  = Math.abs(mealMin-nowMin)<30 && !eaten;
-    const isPast = mealMin < nowMin-30 && !eaten;
+    const menuItem = todayMenu[i]; // dagmenu suggestie
+    const isNow   = Math.abs(mealMin-nowMin)<30 && !eaten;
+    const isPast  = mealMin < nowMin-30 && !eaten;
 
-    let cls, check, label, kcalLbl, sublabel='', actionHint='';
+    let cls, check, label, kcalLbl, sublabel='', actionHint='', extraBtn='';
 
     if(eaten){
-      // ✅ Gegeten — groen, niet meer klikbaar voor log
       cls='done'; check='✅';
       label=eaten.food;
-      kcalLbl=eaten.kcal+' kcal gegeten';
+      kcalLbl=eaten.kcal+' kcal gegeten · '+Math.round(eaten.protein||0)+'g eiwit';
     } else if(planned){
-      // 📋 Gepland maar nog niet gegeten
       cls='planned'; check='📋';
       label=planned.food;
-      kcalLbl=planned.kcal+' kcal gepland';
-      actionHint='<div style="font-size:10px;color:var(--green-bright);margin-top:3px">Tik: Gegeten ✓ &nbsp;|&nbsp; Lang indrukken: Wijzigen</div>';
+      kcalLbl=planned.kcal+' kcal gepland · '+Math.round(planned.protein||0)+'g eiwit';
+      actionHint='<div style="font-size:10px;color:var(--green-bright);margin-top:3px">👆 Tik om te bevestigen als gegeten</div>';
     } else if(isPast){
-      // ⚠️ Gemist
       cls='past-meal'; check='⚠️';
-      label='Niet gelogd — tik om in te voeren';
-      kcalLbl='';
+      // Toon dagmenu voor gemist moment
+      label=menuItem ? menuItem.food : 'Niet gelogd';
+      kcalLbl=menuItem ? menuItem.kcal+' kcal doel' : '';
     } else {
-      // ○ Gepland, coach suggestie tonen
+      // Toekomstig of huidig — toon dagmenu suggestie
       cls=isNow?'active-now':''; check=isNow?'🔔':'○';
-      const adv=getMealNutritionAdvice(i);
-      const topSugg=adv.suggestions?.[0];
-      label=topSugg?topSugg.food:(adv.suggestion?.food||'Tik om te plannen of loggen');
-      kcalLbl='~'+adv.mealKcal+' kcal doel · '+adv.mealProtein+'g eiwit';
-      if(adv.remainProtein>20) sublabel='⚠️ Nog '+Math.round(adv.remainProtein)+'g eiwit nodig';
+      if(menuItem){
+        label=menuItem.food;
+        kcalLbl=menuItem.kcal+' kcal · '+menuItem.protein+'g eiwit';
+        // Vervang-knop naast elk menu-item
+        extraBtn=`<button onclick="event.stopPropagation();replaceMenuItemForMeal(${i})" 
+          style="background:rgba(127,140,141,0.15);border:none;color:var(--steel-light);
+                 padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer;margin-top:4px;display:inline-block">
+          ↺ Vervang
+        </button>`;
+      } else {
+        label='Tik om te plannen';
+        kcalLbl='';
+      }
     }
 
-    // Click handler: eaten → confirmEaten, planned → confirm, else → modal
     const clickHandler = planned && !eaten
       ? `confirmMealEaten(${i})`
       : `openMealModal(${i})`;
 
     html+=`<div class="meal-slot ${cls}" onclick="${clickHandler}" style="cursor:pointer;">
       <div class="meal-time" style="${isPast&&!eaten?'color:var(--red-hot)':planned&&!eaten?'color:var(--green-bright)':''}">${time}</div>
-      <div style="flex:1">
+      <div style="flex:1;min-width:0">
         <div class="meal-name">${names[i]}</div>
         <div class="meal-kcal" style="font-size:12px;line-height:1.4">${label}</div>
         ${kcalLbl?`<div style="font-size:10px;color:var(--steel);font-family:var(--font-mono)">${kcalLbl}</div>`:''}
         ${sublabel?`<div style="font-size:10px;color:var(--amber);margin-top:2px">${sublabel}</div>`:''}
+        ${extraBtn}
         ${actionHint}
       </div>
       <div class="meal-check">${check}</div>
@@ -1998,8 +2213,13 @@ async function saveMealEntry(mealIndex,food,kcal,protein,carbs,fat){
     await db.settings.put({key:'foodFrequency', value:state.foodFrequency});
   }
 
-  // Ververs de daglog cache zodat het volgende advies meteen klopt
+  // Ververs de daglog cache
   await refreshFoodCache();
+  // Markeer het bijbehorende dagmenu-item als gegeten (zelflerend)
+  const todayMenuRec = await db.settings.get('dailyMenu_' + new Date().toISOString().split('T')[0]);
+  if (todayMenuRec?.value?.[mealIndex]?.id) {
+    await markMenuItemEaten(todayMenuRec.value[mealIndex].id);
+  }
 
   closeModal('meal-modal'); selectedPresetId = null;
   toast('✅ Opgeslagen!', 'success'); vibrate([50,20,50]);
@@ -2668,6 +2888,64 @@ async function stopGPS(){
 // ══════════════════════════════════════════════════════════
 //  INSTELLINGEN
 // ══════════════════════════════════════════════════════════
+// ── FAVORIETENMENU RENDEREN IN INSTELLINGEN ──────────────────
+async function renderMenuFavorites() {
+  const c = document.getElementById('menu-favorites-content');
+  if (!c) return;
+  const favRec = await db.settings.get('menuFavoriteIds');
+  const favs = favRec?.value || {};
+  const freqRec = await db.settings.get('menuItemFrequency');
+  const freq = freqRec?.value || {};
+  const mealNames = ['🌅 Ontbijt','🍎 Tussendoor','🥗 Lunch','🍊 Tussendoor','🍽️ Diner','🌙 Snack'];
+  let html = '';
+  for (let mi = 0; mi < 6; mi++) {
+    const options = MENU_OPTIONS[mi] || [];
+    const myFavs = favs[mi] || [];
+    html += `<div style="margin-bottom:14px">
+      <div style="font-size:12px;color:var(--amber);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${mealNames[mi]}</div>`;
+    options.forEach(opt => {
+      const isFav = myFavs.includes(opt.id);
+      const eatCount = freq[opt.id] || 0;
+      html += `<div onclick="toggleMenuFavUI(${mi},'${opt.id}',this)"
+        style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:5px;
+               margin-bottom:4px;cursor:pointer;border:1px solid ${isFav?'var(--amber)':'var(--border)'};
+               background:${isFav?'rgba(230,126,34,0.08)':'transparent'};transition:all 0.15s"
+        data-fav="${isFav?'1':'0'}" data-mi="${mi}" data-id="${opt.id}">
+        <span style="font-size:20px;flex-shrink:0">${isFav?'⭐':'○'}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:${isFav?'700':'400'}">${opt.food}</div>
+          <div style="font-size:10px;color:var(--steel);font-family:var(--font-mono)">${opt.kcal} kcal · ${opt.protein}g eiwit${eatCount>0?' · '+eatCount+'× gegeten':''}</div>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+  html += `<button class="btn btn-amber btn-sm" onclick="regenerateTodayMenu()" style="width:100%;margin-top:4px">🔄 Dagmenu opnieuw genereren</button>`;
+  c.innerHTML = html;
+}
+
+async function toggleMenuFavUI(mealIndex, itemId, el) {
+  const isFav = el.dataset.fav === '1';
+  const newState = !isFav;
+  el.dataset.fav = newState ? '1' : '0';
+  el.style.borderColor = newState ? 'var(--amber)' : 'var(--border)';
+  el.style.background   = newState ? 'rgba(230,126,34,0.08)' : 'transparent';
+  el.querySelector('span').textContent = newState ? '⭐' : '○';
+  el.querySelector('div div').style.fontWeight = newState ? '700' : '400';
+  await toggleMenuFavorite(mealIndex, itemId);
+  vibrate(15);
+}
+
+async function regenerateTodayMenu() {
+  const today = new Date().toISOString().split('T')[0];
+  // Verwijder huidig dagmenu zodat het opnieuw gegenereerd wordt
+  await db.settings.delete('dailyMenu_' + today);
+  await getTodayMenu(); // genereert nieuw menu
+  toast('📅 Dagmenu vernieuwd!', 'success');
+  vibrate([20,10,20]);
+  renderMealSlots();
+}
+
 function renderSettings(){
   const c=document.getElementById('settings-content');if(!c)return;
   const p=state.profile||{};
@@ -2704,6 +2982,13 @@ function renderSettings(){
       <div style="font-size:12px;color:var(--steel);margin-bottom:4px">• E-bike: eco, tour, sport of turbo</div>
       <div style="font-size:12px;color:var(--steel)">• Geen hardlopen</div>
     </div>
+    <!-- FAVORIETENMENU SECTIE -->
+    <div class="card card-steel" id="menu-favorites-card">
+      <div class="card-title">⭐ Mijn Favoriete Maaltijden</div>
+      <div style="font-size:13px;color:var(--steel);margin-bottom:12px">Vink aan wat je lekker vindt. De app gebruikt dit bij het samenstellen van je dagmenu.</div>
+      <div id="menu-favorites-content"><div style="color:var(--steel);font-size:13px">Laden...</div></div>
+    </div>
+
     <div class="card card-red">
       <div class="card-title">⚠️ Data Beheer</div>
       <div style="font-size:13px;color:var(--steel);margin-bottom:10px">Wis je testdata voordat je de app echt gaat gebruiken.</div>
