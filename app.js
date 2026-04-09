@@ -1,5 +1,5 @@
 'use strict';
-// BUILD: 20260409-1500 — v10.1 PERFECT: next meal fix, gewicht fix, records fix, dag vergelijking fix
+// BUILD: 20260409-1800 — v11: gewicht grafiek fix, GPS kaarten fallback, barcode scanner
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
@@ -955,18 +955,58 @@ function drawWeightChart() {
   canvas.width=W*devicePixelRatio;canvas.height=H*devicePixelRatio;
   canvas.style.width=W+'px';canvas.style.height=H+'px';
   const ctx=canvas.getContext('2d');ctx.scale(devicePixelRatio,devicePixelRatio);
-  const ws=entries.map(e=>e.weight),minW=Math.min(...ws)-1,maxW=Math.max(...ws)+1;
-  const pad=8,cW=W-pad*2,cH=H-pad*2;
+  const ws = entries.map(e=>e.weight);
+  const realMin = Math.min(...ws);
+  const realMax = Math.max(...ws);
+  // Padding voor Y-as: 5% van het bereik maar minimaal 0.5kg
+  const range  = realMax - realMin || 1;
+  const pad5   = Math.max(0.5, range * 0.15);
+  const minW   = realMin - pad5;
+  const maxW   = realMax + pad5;
+
+  const pad=10,cW=W-pad*2,cH=H-pad*2-14; // ruimte onderaan voor labels
   ctx.fillStyle='#161616';ctx.fillRect(0,0,W,H);
-  const px=i=>pad+(i/(entries.length-1))*cW,py=w=>pad+cH-((w-minW)/(maxW-minW||1))*cH;
-  ctx.beginPath();ctx.strokeStyle='#27ae60';ctx.lineWidth=2;ctx.lineJoin='round';
-  entries.forEach((e,i)=>i===0?ctx.moveTo(px(i),py(e.weight)):ctx.lineTo(px(i),py(e.weight)));ctx.stroke();
-  ctx.beginPath();entries.forEach((e,i)=>i===0?ctx.moveTo(px(i),py(e.weight)):ctx.lineTo(px(i),py(e.weight)));
+
+  // Grid lijn op doel (halverwege)
+  const midW = (realMin + realMax) / 2;
+  const gridY = pad + cH - ((midW-minW)/(maxW-minW))*cH;
+  ctx.beginPath();ctx.strokeStyle='rgba(127,140,141,0.2)';ctx.lineWidth=1;
+  ctx.setLineDash([4,4]);ctx.moveTo(pad,gridY);ctx.lineTo(W-pad,gridY);ctx.stroke();
+  ctx.setLineDash([]);
+
+  const px = i => pad+(i/(entries.length-1))*cW;
+  const py = w => pad + cH - ((w-minW)/(maxW-minW))*cH;
+
+  // Vul onder de lijn
+  ctx.beginPath();
+  entries.forEach((e,i)=>i===0?ctx.moveTo(px(i),py(e.weight)):ctx.lineTo(px(i),py(e.weight)));
   ctx.lineTo(px(entries.length-1),pad+cH);ctx.lineTo(px(0),pad+cH);ctx.closePath();
-  ctx.fillStyle='rgba(39,174,96,0.1)';ctx.fill();
-  entries.forEach((e,i)=>{ctx.beginPath();ctx.arc(px(i),py(e.weight),3,0,Math.PI*2);ctx.fillStyle='#27ae60';ctx.fill();});
-  ctx.fillStyle='#7f8c8d';ctx.font='10px monospace';ctx.textAlign='left';ctx.fillText(maxW.toFixed(1)+'kg',pad,pad+10);
-  ctx.textAlign='right';ctx.fillText(minW.toFixed(1)+'kg',W-pad,H-2);
+  ctx.fillStyle='rgba(39,174,96,0.12)';ctx.fill();
+
+  // Lijn
+  ctx.beginPath();ctx.strokeStyle='#27ae60';ctx.lineWidth=2.5;ctx.lineJoin='round';ctx.lineCap='round';
+  entries.forEach((e,i)=>i===0?ctx.moveTo(px(i),py(e.weight)):ctx.lineTo(px(i),py(e.weight)));ctx.stroke();
+
+  // Punten
+  entries.forEach((e,i)=>{
+    const isLast = i===entries.length-1;
+    ctx.beginPath();ctx.arc(px(i),py(e.weight),isLast?5:2.5,0,Math.PI*2);
+    ctx.fillStyle=isLast?'#2ecc71':'#27ae60';ctx.fill();
+    if(isLast){ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();}
+  });
+
+  // Labels — toon WERKELIJKE min en max waarden (niet min-1/max+1)
+  ctx.fillStyle='#aab';ctx.font='bold 10px monospace';
+  ctx.textAlign='left'; ctx.fillText(realMax.toFixed(1)+' kg', pad+2, pad+10);
+  ctx.textAlign='right';ctx.fillText(realMin.toFixed(1)+' kg', W-pad-2, pad+cH-2);
+
+  // Datum labels voor eerste en laatste meting
+  if(entries.length >= 2){
+    const fmt = d => new Date(d).toLocaleDateString('nl-NL',{day:'2-digit',month:'short'});
+    ctx.fillStyle='#7f8c8d';ctx.font='9px monospace';
+    ctx.textAlign='left'; ctx.fillText(fmt(entries[0].date),  pad, H-2);
+    ctx.textAlign='right';ctx.fillText(fmt(entries[entries.length-1].date), W-pad, H-2);
+  }
 }
 
 // ── DAG-VERGELIJKING — gisteren vs vandaag, stimulerend ──────
@@ -1960,28 +2000,184 @@ async function toggleFood(el,containerId){
   vibrate(15);
 }
 
-// ── EIGEN PRODUCT TOEVOEGEN (permanent) ──────────────────────
-function showAddFoodModal(){document.getElementById('add-food-modal').classList.add('active');}
-async function saveCustomFood(){
-  const name  =document.getElementById('new-food-name').value.trim();
-  const emoji =document.getElementById('new-food-emoji').value.trim()||'🍽️';
-  const unit  =document.getElementById('new-food-unit').value.trim()||'100g';
-  const kcal  =parseFloat(document.getElementById('new-food-kcal').value)||0;
-  const prot  =parseFloat(document.getElementById('new-food-protein').value)||0;
-  const carbs =parseFloat(document.getElementById('new-food-carbs').value)||0;
-  const fat   =parseFloat(document.getElementById('new-food-fat').value)||0;
-  if(!name||!kcal){toast('Naam en calorieën zijn verplicht!','error');return;}
-  const id=await db.customFoods.add({name,emoji,unit,kcal,protein:prot,carbs,fat});
-  state.customFoods=await db.customFoods.toArray();
-  FOODS=[...FOODS_BUILTIN,...state.customFoods.map(f=>({...f,id:'custom_'+f.id}))];
-  // Auto-select het nieuwe product
+// ══════════════════════════════════════════════════════════
+//  EIGEN PRODUCT TOEVOEGEN — met barcode scanner
+// ══════════════════════════════════════════════════════════
+
+function showAddFoodModal() {
+  document.getElementById('add-food-modal').classList.add('active');
+  // Reset scanner state
+  _stopBarcodeScanner();
+  document.getElementById('barcode-status').textContent = '';
+  document.getElementById('barcode-result').style.display = 'none';
+}
+
+// ── BARCODE SCANNER ────────────────────────────────────────
+let _barcodeStream = null;
+let _barcodeInterval = null;
+
+async function startBarcodeScanner() {
+  const btn = document.getElementById('barcode-scan-btn');
+  const status = document.getElementById('barcode-status');
+  const videoWrap = document.getElementById('barcode-video-wrap');
+  const video = document.getElementById('barcode-video');
+
+  // Check BarcodeDetector ondersteuning
+  if (!('BarcodeDetector' in window)) {
+    // Fallback: handmatig barcode invullen
+    status.innerHTML = '<span style="color:var(--amber)">⚠️ Camera-scanner niet beschikbaar op dit apparaat.<br>Vul de barcode handmatig in:</span>';
+    document.getElementById('barcode-manual-row').style.display = 'flex';
+    return;
+  }
+
+  try {
+    status.textContent = '📷 Camera starten...';
+    if (btn) btn.disabled = true;
+
+    _barcodeStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width:{ideal:1280}, height:{ideal:720} }
+    });
+
+    video.srcObject = _barcodeStream;
+    await video.play();
+    videoWrap.style.display = 'block';
+    status.textContent = '📦 Houd barcode voor camera...';
+
+    const detector = new BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39'] });
+
+    _barcodeInterval = setInterval(async () => {
+      try {
+        const barcodes = await detector.detect(video);
+        if (barcodes.length > 0) {
+          const barcode = barcodes[0].rawValue;
+          clearInterval(_barcodeInterval);
+          _barcodeInterval = null;
+          _stopBarcodeScanner();
+          await lookupBarcode(barcode);
+        }
+      } catch(e) { /* frame fout — doorgaan */ }
+    }, 400);
+
+  } catch(err) {
+    status.innerHTML = '<span style="color:var(--red-hot)">Camera toegang geweigerd. Controleer permissies.</span>';
+    if (btn) btn.disabled = false;
+  }
+}
+
+function _stopBarcodeScanner() {
+  if (_barcodeInterval) { clearInterval(_barcodeInterval); _barcodeInterval = null; }
+  if (_barcodeStream) {
+    _barcodeStream.getTracks().forEach(t => t.stop());
+    _barcodeStream = null;
+  }
+  const vw = document.getElementById('barcode-video-wrap');
+  if (vw) vw.style.display = 'none';
+  const btn = document.getElementById('barcode-scan-btn');
+  if (btn) btn.disabled = false;
+}
+
+async function lookupBarcodeManual() {
+  const val = document.getElementById('barcode-manual-input').value.trim();
+  if (!val) { toast('Vul een barcode in', 'error'); return; }
+  await lookupBarcode(val);
+}
+
+async function lookupBarcode(barcode) {
+  const status = document.getElementById('barcode-status');
+  const resultDiv = document.getElementById('barcode-result');
+  status.textContent = `🔍 Barcode ${barcode} opzoeken...`;
+  resultDiv.style.display = 'none';
+
+  try {
+    // Open Food Facts API — gratis, geen key, wereldwijde database
+    const url = `https://world.openfoodfacts.org/api/v2/product/${barcode}?fields=product_name,nutriments,serving_size,quantity,image_small_url`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const data = await resp.json();
+
+    if (data.status !== 1 || !data.product) {
+      status.innerHTML = `<span style="color:var(--amber)">⚠️ Product niet gevonden (${barcode}). Vul handmatig in.</span>`;
+      return;
+    }
+
+    const p = data.product;
+    const n = p.nutriments || {};
+
+    // Haal voedingswaarden per 100g
+    const kcal   = Math.round(n['energy-kcal_100g'] || n['energy-kcal'] || (n['energy_100g']/4.184) || 0);
+    const prot   = Math.round((n['proteins_100g']       || 0) * 10) / 10;
+    const carbs  = Math.round((n['carbohydrates_100g']  || 0) * 10) / 10;
+    const fat    = Math.round((n['fat_100g']            || 0) * 10) / 10;
+    const name   = p.product_name || 'Onbekend product';
+
+    status.innerHTML = `<span style="color:var(--green-bright)">✅ Product gevonden!</span>`;
+
+    // Vul formulier automatisch in
+    document.getElementById('new-food-name').value  = name;
+    document.getElementById('new-food-kcal').value  = kcal;
+    document.getElementById('new-food-protein').value = prot;
+    document.getElementById('new-food-carbs').value = carbs;
+    document.getElementById('new-food-fat').value   = fat;
+    document.getElementById('new-food-unit').value  = '100g';
+
+    // Kies emoji op basis van productnaam
+    const lower = name.toLowerCase();
+    let emoji = '🍽️';
+    if(lower.includes('melk')||lower.includes('yoghurt')||lower.includes('kwark')) emoji='🥛';
+    else if(lower.includes('kaas')) emoji='🧀';
+    else if(lower.includes('brood')||lower.includes('boterham')) emoji='🍞';
+    else if(lower.includes('kip')||lower.includes('chicken')) emoji='🍗';
+    else if(lower.includes('vis')||lower.includes('zalm')||lower.includes('tonijn')) emoji='🐟';
+    else if(lower.includes('appel')) emoji='🍎';
+    else if(lower.includes('banaan')) emoji='🍌';
+    else if(lower.includes('ei')||lower.includes('egg')) emoji='🥚';
+    else if(lower.includes('pasta')||lower.includes('spaghetti')) emoji='🍝';
+    else if(lower.includes('rijst')) emoji='🍚';
+    else if(lower.includes('noten')||lower.includes('pinda')) emoji='🥜';
+    else if(lower.includes('chocolate')||lower.includes('chocola')||lower.includes('reep')) emoji='🍫';
+    else if(lower.includes('shake')||lower.includes('protein')) emoji='🥤';
+    document.getElementById('new-food-emoji').value = emoji;
+
+    // Toon resultaat preview
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = `<div style="background:rgba(39,174,96,0.1);border-left:3px solid var(--green);padding:10px;border-radius:4px;margin-top:8px">
+      <div style="font-weight:700;font-size:14px">${emoji} ${name}</div>
+      <div style="font-size:12px;color:var(--steel);margin-top:4px;font-family:var(--font-mono)">Per 100g: ${kcal} kcal · ${prot}g eiwit · ${carbs}g koolh · ${fat}g vet</div>
+      <div style="font-size:11px;color:var(--green-bright);margin-top:4px">✅ Voedingswaarden automatisch ingevuld — scroll naar beneden om op te slaan</div>
+    </div>`;
+
+  } catch(err) {
+    if (err.name === 'TimeoutError') {
+      status.innerHTML = '<span style="color:var(--amber)">⏱️ Timeout — geen internet? Vul handmatig in.</span>';
+    } else {
+      status.innerHTML = `<span style="color:var(--red-hot)">Fout: ${err.message}</span>`;
+    }
+  }
+}
+
+async function saveCustomFood() {
+  _stopBarcodeScanner(); // zeker stoppen voor opslaan
+  const name  = document.getElementById('new-food-name').value.trim();
+  const emoji = document.getElementById('new-food-emoji').value.trim() || '🍽️';
+  const unit  = document.getElementById('new-food-unit').value.trim()  || '100g';
+  const kcal  = parseFloat(document.getElementById('new-food-kcal').value)    || 0;
+  const prot  = parseFloat(document.getElementById('new-food-protein').value) || 0;
+  const carbs = parseFloat(document.getElementById('new-food-carbs').value)   || 0;
+  const fat   = parseFloat(document.getElementById('new-food-fat').value)     || 0;
+  if (!name || !kcal) { toast('Naam en calorieën zijn verplicht!', 'error'); return; }
+  const id = await db.customFoods.add({name, emoji, unit, kcal, protein:prot, carbs, fat});
+  state.customFoods = await db.customFoods.toArray();
+  FOODS = [...FOODS_BUILTIN, ...state.customFoods.map(f => ({...f, id:'custom_'+f.id}))];
   state.foodPreferences.push('custom_'+id);
-  await db.settings.put({key:'foodPreferences',value:state.foodPreferences});
+  await db.settings.put({key:'foodPreferences', value:state.foodPreferences});
   closeModal('add-food-modal');
-  renderFoodMatrix('food-matrix-main',false);
+  renderFoodMatrix('food-matrix-main', false);
   populateMenuProductSelect();
-  toast(`${emoji} ${name} permanent opgeslagen!`,'success');
-  ['new-food-name','new-food-emoji','new-food-unit','new-food-kcal','new-food-protein','new-food-carbs','new-food-fat'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  toast(`${emoji} ${name} opgeslagen!`, 'success');
+  ['new-food-name','new-food-emoji','new-food-unit','new-food-kcal','new-food-protein','new-food-carbs','new-food-fat'].forEach(i => {
+    const el = document.getElementById(i); if (el) el.value = '';
+  });
+  document.getElementById('barcode-status').textContent = '';
+  document.getElementById('barcode-result').style.display = 'none';
 }
 
 // ══════════════════════════════════════════════════════════
@@ -2106,22 +2302,44 @@ async function renderRecentTrainings(){
     const timeStr = t.time ? ` · ${t.time}` : '';
     const isGPS = t.type === 'gps';
 
-    // Gebruik gpsRouteId voor exacte koppeling (niet datum-matching!)
+    // Stap 1: exacte koppeling via gpsRouteId (nieuwe sessies)
     let matchRoute = null;
-    if(isGPS && t.gpsRouteId) {
+    if (isGPS && t.gpsRouteId) {
       matchRoute = gpsRoutesById[t.gpsRouteId];
     }
-    const hasGPS = isGPS && matchRoute && matchRoute.positions && matchRoute.positions.length > 3;
 
-    // Kaart alleen voor GPS-activiteiten met echte routedata
+    // Stap 2: fallback voor oude sessies zonder gpsRouteId
+    // Match op datum + tijd: zoek GPS route van dezelfde dag die het dichtst bij starttijd ligt
+    if (isGPS && !matchRoute) {
+      const trainingDateStr = (t.date || '').split('T')[0];
+      const trainingTs = new Date(t.date).getTime();
+      const candidates = gpsRoutesList.filter(r =>
+        r.positions && r.positions.length > 3 &&
+        (r.date || '').split('T')[0] === trainingDateStr
+      );
+      if (candidates.length > 0) {
+        // Kies de route waarvan de startdatum het dichtst bij de trainingsdatum ligt
+        candidates.sort((a,b) =>
+          Math.abs(new Date(a.date).getTime() - trainingTs) -
+          Math.abs(new Date(b.date).getTime() - trainingTs)
+        );
+        matchRoute = candidates[0];
+      }
+    }
+
+    const hasGPS = isGPS && matchRoute && matchRoute.positions && matchRoute.positions.length > 3;
+    const routeId = matchRoute ? matchRoute.id : 0;
+
     const mapHtml = hasGPS
-      ? `<div id="leafmap-${t.id}" style="margin-top:8px;height:120px;border-radius:6px;overflow:hidden;cursor:pointer;" onclick="openFullMap(${matchRoute ? matchRoute.id : 0})"></div>`
+      ? `<div id="leafmap-${t.id}" style="margin-top:8px;height:130px;border-radius:6px;overflow:hidden;cursor:pointer;border:1px solid var(--border);" onclick="openFullMap(${routeId})">
+           <div style="height:100%;background:var(--darker);display:flex;align-items:center;justify-content:center;color:var(--steel);font-size:12px">🗺️ Kaart laden...</div>
+         </div>`
       : '';
 
     return {
       html: `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
         <div style="display:flex;justify-content:space-between;align-items:flex-start">
-          <div>
+          <div style="flex:1">
             <div style="font-weight:700;font-size:14px">${t.name}</div>
             <div style="font-size:11px;color:var(--steel);font-family:var(--font-mono)">${new Date(t.date).toLocaleDateString('nl-NL')}${timeStr} · ${formatSeconds(t.duration)}${distStr}</div>
           </div>
@@ -2139,14 +2357,14 @@ async function renderRecentTrainings(){
 
   c.innerHTML = htmlParts.map(x=>x.html).join('');
 
-  // Render Leaflet kaarten na DOM update
+  // Render Leaflet kaarten — iets langere delay zodat DOM en Leaflet klaar zijn
   setTimeout(() => {
     htmlParts.forEach(item => {
-      if(item.route && item.route.positions) {
+      if (item.route && item.route.positions && item.route.positions.length > 3) {
         drawLeafletMap('leafmap-'+item.id, item.route.positions);
       }
     });
-  }, 50);
+  }, 200);
 }
 
 // ── LEAFLET KAART — echte plattegrond voor GPS routes ──────────

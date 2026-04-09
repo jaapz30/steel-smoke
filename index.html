@@ -446,21 +446,54 @@
 
 <!-- ADD FOOD MODAL — eigen product permanent opslaan -->
 <div class="modal-overlay" id="add-food-modal">
-  <div class="modal-sheet">
+  <div class="modal-sheet" style="max-height:92vh;overflow-y:auto;">
     <div class="modal-handle"></div>
     <div class="modal-title">➕ Eigen Product Toevoegen</div>
-    <div style="font-size:13px;color:var(--green-bright);margin-bottom:12px;">⭐ Dit product wordt permanent opgeslagen en altijd zichtbaar in jouw lijst.</div>
-    <div class="input-group"><label class="input-label">Naam <span style="color:var(--red-hot)">*</span></label><input type="text" class="input-field" id="new-food-name" placeholder="bijv. Mijn proteïnereep"></div>
-    <div class="input-group"><label class="input-label">Emoji</label><input type="text" class="input-field" id="new-food-emoji" placeholder="🍫" maxlength="2"></div>
-    <div class="input-group"><label class="input-label">Eenheid (bijv. stuk, 100g, el)</label><input type="text" class="input-field" id="new-food-unit" placeholder="stuk"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-      <div class="input-group"><label class="input-label">kcal <span style="color:var(--red-hot)">*</span></label><input type="number" class="input-field" id="new-food-kcal" placeholder="200" inputmode="numeric"></div>
-      <div class="input-group"><label class="input-label">Eiwit (g)</label><input type="number" class="input-field" id="new-food-protein" placeholder="15" inputmode="decimal"></div>
-      <div class="input-group"><label class="input-label">Koolhyd. (g)</label><input type="number" class="input-field" id="new-food-carbs" placeholder="20" inputmode="decimal"></div>
-      <div class="input-group"><label class="input-label">Vet (g)</label><input type="number" class="input-field" id="new-food-fat" placeholder="8" inputmode="decimal"></div>
+
+    <!-- BARCODE SCANNER SECTIE -->
+    <div style="background:rgba(39,174,96,0.08);border:1px solid var(--green);border-radius:6px;padding:12px;margin-bottom:14px;">
+      <div style="font-size:12px;color:var(--green-bright);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">📦 Scan barcode of zoek product</div>
+      <button id="barcode-scan-btn" onclick="startBarcodeScanner()" class="btn btn-green btn-sm" style="width:100%;margin-bottom:8px;">
+        📷 Barcode scannen met camera
+      </button>
+      <!-- Handmatige barcode invoer (fallback) -->
+      <div id="barcode-manual-row" style="display:none;gap:6px;margin-bottom:8px;">
+        <input type="text" id="barcode-manual-input" class="input-field" placeholder="Barcode handmatig invullen..." inputmode="numeric" style="flex:1;font-size:13px;">
+        <button onclick="lookupBarcodeManual()" class="btn btn-steel btn-sm" style="flex-shrink:0;">Zoek</button>
+      </div>
+      <!-- Video preview -->
+      <div id="barcode-video-wrap" style="display:none;position:relative;border-radius:6px;overflow:hidden;margin-bottom:8px;">
+        <video id="barcode-video" playsinline muted style="width:100%;height:160px;object-fit:cover;background:#000;display:block;"></video>
+        <div style="position:absolute;inset:0;border:2px solid var(--green-bright);border-radius:6px;pointer-events:none;">
+          <div style="position:absolute;top:50%;left:10%;right:10%;height:2px;background:rgba(39,174,96,0.7);transform:translateY(-50%);"></div>
+        </div>
+        <button onclick="_stopBarcodeScanner()" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.7);border:none;color:white;border-radius:4px;padding:4px 10px;font-size:12px;cursor:pointer;">Stop</button>
+      </div>
+      <div id="barcode-status" style="font-size:12px;color:var(--steel);min-height:16px;"></div>
+      <div id="barcode-result" style="display:none;"></div>
     </div>
+
+    <div style="font-size:12px;color:var(--steel);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Of vul handmatig in:</div>
+
+    <div class="input-group"><label class="input-label">Naam *</label>
+      <input type="text" class="input-field" id="new-food-name" placeholder="bijv. Mijn proteïnereep"></div>
+    <div class="input-group"><label class="input-label">Emoji</label>
+      <input type="text" class="input-field" id="new-food-emoji" placeholder="🍽️" style="font-size:20px;"></div>
+    <div class="input-group"><label class="input-label">Eenheid (bijv. stuk, 100g, el)</label>
+      <input type="text" class="input-field" id="new-food-unit" placeholder="stuk"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      <div class="input-group"><label class="input-label">Kcal *</label>
+        <input type="number" class="input-field" id="new-food-kcal" placeholder="200" inputmode="decimal"></div>
+      <div class="input-group"><label class="input-label">Eiwit (g)</label>
+        <input type="number" class="input-field" id="new-food-protein" placeholder="15" inputmode="decimal"></div>
+      <div class="input-group"><label class="input-label">Koolhyd. (g)</label>
+        <input type="number" class="input-field" id="new-food-carbs" placeholder="20" inputmode="decimal"></div>
+      <div class="input-group"><label class="input-label">Vet (g)</label>
+        <input type="number" class="input-field" id="new-food-fat" placeholder="8" inputmode="decimal"></div>
+    </div>
+    <div style="font-size:12px;color:var(--green-bright);margin-bottom:12px;">⭐ Dit product wordt permanent opgeslagen en altijd zichtbaar in jouw lijst.</div>
     <button class="btn btn-green" onclick="saveCustomFood()">✅ Permanent Opslaan</button>
-    <button class="btn btn-ghost btn-sm mt-8" onclick="closeModal('add-food-modal')">Annuleer</button>
+    <button class="btn btn-ghost btn-sm mt-8" onclick="closeModal('add-food-modal');_stopBarcodeScanner()">Annuleer</button>
   </div>
 </div>
 
