@@ -1,6 +1,6 @@
 // ── SERVICE WORKER v5 — Steel & Smoke ────────────────────────
 // Bump CACHE_VERSION om nieuwe versie af te dwingen
-const CACHE_VERSION = 'v11-20260409-1800';
+const CACHE_VERSION = 'v11-20260409-2000';
 const CACHE_NAME = 'steel-smoke-' + CACHE_VERSION;
 
 const STATIC_ASSETS = [

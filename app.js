@@ -1,5 +1,5 @@
 'use strict';
-// BUILD: 20260409-1800 — v11: gewicht grafiek fix, GPS kaarten fallback, barcode scanner
+// BUILD: 20260409-2000 — v11.2: advies-cache, geen verspringen, coach per tijdvak
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
@@ -279,43 +279,65 @@ async function selectSmartAdvice(tijdvak, remaining, todayTypes) {
   return scored[0];
 }
 
-async function computeNextSportMoment() {
+async function computeNextSportMoment(forceNew = false) {
   const now = new Date();
   const h = now.getHours();
+  const nowMin = now.getHours()*60 + now.getMinutes();
   const today = now.toISOString().split('T')[0];
   const trainings = await db.trainings.where('date').startsWith(today).toArray();
   const totalMovedMin = Math.round(trainings.reduce((s,t) => s+(t.duration||0),0)/60);
   const remaining = Math.max(0, DAILY_MOVE_GOAL_MIN - totalMovedMin);
 
   if (remaining <= 0) {
+    state._adviceCache = null; // reset cache als dagdoel gehaald
     return {done:true, msg:'✅ Dagdoel bereikt! Goed gedaan!', next:null};
   }
 
-  // Bepaal tijdvak
   const tijdvak = h < 7 ? 'ochtend' : h < 12 ? 'ochtend' : h < 17 ? 'middag' : 'avond';
+
+  // ── CACHE CHECK ──────────────────────────────────────────────
+  // Hergebruik het gecachede advies tenzij:
+  // - forceNew=true (gebruiker klikte "Ander advies")
+  // - tijdvak is veranderd (ochtend→middag→avond)
+  // - resterende minuten zijn significant veranderd (>5 min verschil)
+  // - cache is ouder dan 30 minuten
+  const cache = state._adviceCache;
+  if (!forceNew && cache && cache.tijdvak === tijdvak) {
+    const remainingDiff = Math.abs(cache.remaining - remaining);
+    const ageMin = (nowMin - state._adviceCacheMin + 1440) % 1440;
+    if (remainingDiff < 6 && ageMin < 30) {
+      // Geef gecacheed resultaat terug met bijgewerkt remaining
+      return { ...cache.result, remaining };
+    }
+  }
+
+  // ── NIEUW ADVIES BEREKENEN ───────────────────────────────────
 
   // Gym ALLEEN voor 07:00
   if (h < 7) {
     const gymAdviezen = SPORT_ADVICE_POOL.filter(a => a.type === 'gym');
     const seenRec = await db.settings.get('advicesSeen');
     const seen = seenRec?.value || {};
-    // Kies gym-advies met minste views
     const gymAdv = gymAdviezen.sort((a,b)=>(seen[a.id]||0)-(seen[b.id]||0))[0];
     if (gymAdv) {
-      await markAdviceSeen(gymAdv.id);
-      return {
+      if (forceNew) await markAdviceSeen(gymAdv.id); // alleen markeren bij bewuste wissel
+      const result = {
         done:false,
         next:{id:'gewichten', name:'Sportschool', emoji:'🏋️', minutes:parseInt(gymAdv.duration)||40},
         timeLabel:'Nu (voor 07:00)',
         reason:'Sportschool moment — de enige tijd dat jij traint',
         remaining, msg:'🏋️ Sportschool — nu gaan voor 07:00!', advice: gymAdv,
       };
+      state._adviceCache = { result, tijdvak, remaining };
+      state._adviceCacheMin = nowMin;
+      return result;
     }
   }
 
   const todayTypes = trainings.map(t => t.type || 'gym');
   const best = await selectSmartAdvice(tijdvak, remaining, todayTypes);
-  if (best) await markAdviceSeen(best.id);
+  // markAdviceSeen alleen bij bewuste wissel, NIET bij automatisch herberekenen
+  if (best && forceNew) await markAdviceSeen(best.id);
 
   const gpsAct = best.gps ? GPS_ACTIVITIES.find(a => a.id === best.gps) : null;
   const activityObj = gpsAct
@@ -324,7 +346,7 @@ async function computeNextSportMoment() {
 
   const kcalEst = Math.round((activityObj.met||3.5)*(state.profile?.weight||115)*(best.advMin/60)*1.05);
 
-  return {
+  const result = {
     done:false,
     next:activityObj,
     timeLabel:best.time,
@@ -334,13 +356,18 @@ async function computeNextSportMoment() {
     msg:best.emoji+' '+best.activity+' om '+best.time,
     advice:best,
   };
+
+  // Sla op in cache
+  state._adviceCache = { result, tijdvak, remaining };
+  state._adviceCacheMin = nowMin;
+  return result;
 }
 
 // Render het volgende sportmoment op dashboard
-async function renderNextSportMoment() {
+async function renderNextSportMoment(forceNew = false) {
   const c = document.getElementById('next-sport-card');
   if (!c) return;
-  const result = await computeNextSportMoment();
+  const result = await computeNextSportMoment(forceNew);
 
   if (result.done) {
     c.innerHTML = '<div style="font-family:var(--font-display);font-size:18px;letter-spacing:1px;color:var(--green-bright)">✅ Dagdoel bereikt!</div>' +
@@ -378,6 +405,9 @@ let state = {
   activePeriod:'dag', weightEntries:[], customSports:[], savedMeals:[], customFoods:[],
   settings:{ notifications:true, backgroundSync:true, sound:true, gymReminderEnabled:true },
   todayAdviceIndex:0,
+  // Advies cache — voorkomt verspringen bij elke render
+  _adviceCache: null,      // { result, tijdvak, remaining, computedAt }
+  _adviceCacheMin: -1,     // minuut waarop de cache gemaakt is
 };
 
 // ── HYDRATIECOACH ─────────────────────────────────────────────
@@ -875,27 +905,36 @@ async function updateMovementBar() {
   }
   // Color coding
   if(el) el.style.background = pct>=100?'var(--green)':pct>=50?'var(--amber)':'var(--red)';
-  // Update sport advies na elke beweegupdate
-  renderNextSportMoment();
+  // NIET renderNextSportMoment() aanroepen hier — dat draait elke seconde
+  // en veroorzaakte het verspringen van adviezen.
+  // Het advies ververst alleen bij: initApp, showScreen(dashboard), nextAdvice knop,
+  // en na afloop van een training.
 }
 
-// ── SPORT ADVIES OP DASHBOARD (met intensiteit badge) ──────────
+// ── SPORT ADVIES OP DASHBOARD ────────────────────────────────
+// Dit is het "dagelijkse tip" blok — apart van het coach-sportmoment
+// Verandert alleen als gebruiker op 🔄 tikt, niet automatisch
 function renderDashAdvice() {
   const c=document.getElementById('dash-advice-card');if(!c)return;
   const adv=SPORT_ADVICE_POOL[state.todayAdviceIndex];
-  const intensBar = adv.intensiteit ? '●'.repeat(adv.intensiteit)+'○'.repeat(4-adv.intensiteit) : '';
-  const typeLabel = {wandelen:'Wandelen',ebike:'E-bike',gym:'Gym',overig:'Overig'}[adv.type]||'';
+  if (!adv) return;
+  const intensDots = adv.intensiteit
+    ? '<span style="color:var(--amber);letter-spacing:2px;font-size:11px">'+'●'.repeat(adv.intensiteit)+'<span style="opacity:0.3">'+'●'.repeat(Math.max(0,4-adv.intensiteit))+'</span></span>'
+    : '';
+  const typeLabel = {wandelen:'🚶 Wandelen',ebike:'⚡ E-bike',gym:'🏋️ Gym',overig:'🏊 Overig'}[adv.type]||'';
+  const weekLabel = adv.week ? `Week ${adv.week}` : '';
   c.innerHTML=`<div style="display:flex;align-items:flex-start;gap:10px;">
-    <span style="font-size:28px">${adv.emoji}</span>
-    <div style="flex:1">
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
-        <div style="font-family:var(--font-display);font-size:15px;letter-spacing:1px;color:var(--red-hot)">${adv.activity}</div>
-        ${intensBar?`<span style="font-size:10px;color:var(--amber);letter-spacing:1px">${intensBar}</span>`:''}
+    <span style="font-size:26px;flex-shrink:0">${adv.emoji}</span>
+    <div style="flex:1;min-width:0">
+      <div style="font-family:var(--font-display);font-size:14px;letter-spacing:1px;color:var(--red-hot);margin-bottom:3px">${adv.activity}</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        ${intensDots}
+        <span style="font-size:10px;color:var(--steel)">${adv.time} · ${adv.duration} · ~${adv.kcal} kcal</span>
       </div>
-      <div style="font-size:11px;color:var(--steel);font-family:var(--font-mono);margin:2px 0">${adv.time} · ${adv.duration} · ~${adv.kcal} kcal · ${typeLabel}</div>
-      <div style="font-size:12px;color:var(--steel-light);margin-top:5px;line-height:1.5">${adv.desc}</div>
+      <div style="font-size:11px;color:var(--steel);margin-bottom:4px">${typeLabel}${weekLabel?' · '+weekLabel:''}</div>
+      <div style="font-size:12px;color:var(--steel-light);line-height:1.5">${adv.desc}</div>
     </div>
-    <button onclick="nextAdvice()" style="background:var(--border);border:none;color:var(--steel-light);padding:5px 8px;border-radius:4px;font-size:11px;cursor:pointer;white-space:nowrap;">🔄</button>
+    <button onclick="nextAdvice()" title="Ander advies" style="background:var(--border);border:none;color:var(--steel-light);padding:6px 8px;border-radius:4px;font-size:13px;cursor:pointer;flex-shrink:0">🔄</button>
   </div>`;
 }
 
@@ -914,11 +953,15 @@ function renderDailyAdvice() {
 }
 
 async function nextAdvice() {
-  // Markeer huidig advies als gezien (zelflerend: wordt minder vaak getoond)
+  // Gebruiker kiest bewust een ander advies — reset cache + markeer huidig als gezien
+  state._adviceCache = null;
+  state._adviceCacheMin = -1;
   const current = SPORT_ADVICE_POOL[state.todayAdviceIndex];
   if (current?.id) await markAdviceSeen(current.id);
-  state.todayAdviceIndex=(state.todayAdviceIndex+1)%SPORT_ADVICE_POOL.length;
-  await db.settings.put({key:'adviceIndex',value:state.todayAdviceIndex});
+  state.todayAdviceIndex = (state.todayAdviceIndex+1) % SPORT_ADVICE_POOL.length;
+  await db.settings.put({key:'adviceIndex', value:state.todayAdviceIndex});
+  // forceNew=true: geeft echt een nieuw, ander advies
+  await renderNextSportMoment(true);
   renderDashAdvice();
   renderDailyAdvice();
   vibrate(15);
@@ -1035,24 +1078,33 @@ async function renderDayComparison() {
   const goal = DAILY_MOVE_GOAL_MIN;
 
   let msg, color, icon;
-  if(yestMin === 0 && todayMin === 0) {
-    msg = 'Start vandaag! Elke minuut telt.';
+  const goalHit   = todayMin >= goal;
+  const betterThanYest = todayMin > yestMin;
+  const extraNeeded = Math.max(0, yestMin - todayMin);
+
+  if (yestMin === 0 && todayMin === 0) {
+    msg   = 'Start vandaag! Elke minuut telt.';
     color = 'var(--steel)'; icon = '💪';
-  } else if(todayMin >= goal) {
-    msg = 'Dagdoel gehaald! Beter dan gisteren (' + yestMin + ' min)!';
+  } else if (goalHit && betterThanYest) {
+    msg   = `🏆 Dagdoel gehaald én beter dan gisteren (${yestMin} min)! Topprestatie!`;
     color = 'var(--green-bright)'; icon = '🏆';
-  } else if(diff > 0) {
-    msg = '+' + diff + ' min meer dan gisteren. Houd dit vast!';
-    color = 'var(--green-bright)'; icon = '📈';
-  } else if(diff < -5) {
-    const extra = Math.abs(diff);
-    msg = 'Gisteren ' + extra + ' min meer. Maak het vandaag goed!';
+  } else if (goalHit && !betterThanYest && yestMin > todayMin) {
+    msg   = `✅ Dagdoel gehaald! Gisteren deed je nog ${yestMin - todayMin} min meer — morgen ook!`;
+    color = 'var(--green-bright)'; icon = '✅';
+  } else if (goalHit && todayMin === yestMin) {
+    msg   = `✅ Dagdoel gehaald! Precies evenveel als gisteren (${yestMin} min). Consistent!`;
+    color = 'var(--green-bright)'; icon = '✅';
+  } else if (!goalHit && betterThanYest) {
+    msg   = `📈 +${diff} min meer dan gisteren. Nog ${goal - todayMin} min voor dagdoel!`;
+    color = 'var(--amber)'; icon = '📈';
+  } else if (!goalHit && diff < -5) {
+    msg   = `Gisteren ${yestMin} min, vandaag ${todayMin} min. Nog ${goal - todayMin} min nodig!`;
     color = 'var(--amber)'; icon = '⚡';
-  } else if(todayMin > 0) {
-    msg = todayMin + ' min gedaan. Gisteren: ' + yestMin + ' min. Ga door!';
+  } else if (todayMin > 0) {
+    msg   = `${todayMin} min gedaan. Nog ${goal - todayMin} min voor dagdoel.`;
     color = 'var(--amber)'; icon = '🚶';
   } else {
-    msg = 'Gisteren ' + yestMin + ' min. Vandaag nog niets — begin nu!';
+    msg   = `Gisteren ${yestMin} min. Vandaag nog niets — begin nu!`;
     color = 'var(--red-hot)'; icon = '🔔';
   }
 
@@ -2284,6 +2336,8 @@ async function stopTraining(){
   document.getElementById('training-timer-panel').style.display='none';
   document.querySelectorAll('.gym-btn,.gps-activity-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('gps-stop-btn').style.display='none';
+  // Reset advies-cache na training — zodat nieuw, passend advies gekozen wordt
+  state._adviceCache = null;
   renderRecentTrainings();updateDashboard();updateMovementBar();renderNextSportMoment();
 }
 
