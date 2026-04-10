@@ -341,12 +341,24 @@
     <div id="settings-content"></div>
   </div>
 
-  <!-- BOTTOM NAV -->
+  <!-- STRAVA / GARMIN SCHERM -->
+  <div class="screen" id="screen-strava">
+    <div class="screen-header">
+      <div class="flex-between">
+        <div><h1>GARMIN</h1><div class="subtitle">Strava Activiteiten</div></div>
+        <button onclick="goHome()" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--steel);padding:6px 10px;font-size:16px;cursor:pointer;">🏠</button>
+      </div>
+    </div>
+    <div id="strava-content"><div style="color:var(--steel);padding:20px;text-align:center">Laden...</div></div>
+    <div style="height:80px"></div>
+  </div>
+
+  <!-- BOTTOM NAV — Strava knop toegevoegd -->
   <nav id="bottom-nav">
     <button class="nav-item active" onclick="showScreen('dashboard')" data-screen="dashboard"><span class="nav-icon">🏠</span>Home</button>
     <button class="nav-item" onclick="showScreen('food')" data-screen="food"><span class="nav-icon">🍽️</span>Eten</button>
     <button class="nav-item" onclick="showScreen('training')" data-screen="training"><span class="nav-icon">🏋️</span>Training</button>
-    <button class="nav-item" onclick="showScreen('smoke')" data-screen="smoke"><span class="nav-icon">🚭</span>Roken</button>
+    <button class="nav-item" onclick="showScreen('strava')" data-screen="strava"><span class="nav-icon">📡</span>Garmin</button>
     <button class="nav-item" onclick="showScreen('progress')" data-screen="progress"><span class="nav-icon">📈</span>Records</button>
   </nav>
 </div>

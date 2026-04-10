@@ -1,5 +1,5 @@
 'use strict';
-// BUILD: 20260409-2300 — v12.1: PWA fullscreen definitieve fix, absolute SW paden
+// BUILD: 20260410-0900 — v12.2: Strava/Garmin koppeling volledig
 
 // ── SERVICE WORKER REGISTRATIE ───────────────────────────────
 // Absoluut pad + scope expliciet opgeven = kritisch voor GitHub Pages PWA
@@ -986,6 +986,7 @@ function showScreen(name) {
   if(name==='smoke')     updateSmokeScreen();
   if(name==='report')    renderReport(state.activePeriod);
   if(name==='progress')  renderProgressScreen();
+  if(name==='strava')    renderStravaScreen();
   if(name==='training')  { renderRecentTrainings(); renderDailyAdvice(); }
   if(name==='settings')  { renderSettings(); setTimeout(renderMenuFavorites, 150); }
   vibrate(20);
@@ -3537,6 +3538,283 @@ function isRunningStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches
     || window.matchMedia('(display-mode: fullscreen)').matches
     || window.navigator.standalone === true; // iOS Safari
+}
+
+
+// ══════════════════════════════════════════════════════════════
+//  STRAVA / GARMIN KOPPELING
+//  Haalt activiteiten op via jouw Cloudflare Worker
+// ══════════════════════════════════════════════════════════════
+
+// Haal Worker URL op uit de instellingen
+function getStravaWorkerUrl() {
+  return state.profile?.stravaWorkerUrl || localStorage.getItem('stravaWorkerUrl') || '';
+}
+
+async function saveStravaWorkerUrl() {
+  const input = document.getElementById('strava-worker-url');
+  if (!input) return;
+  const url = input.value.trim().replace(/\/$/, ''); // verwijder trailing slash
+  if (!url) { toast('Vul een Worker URL in', 'error'); return; }
+
+  // Test de verbinding
+  const statusEl = document.getElementById('strava-connect-status');
+  if (statusEl) statusEl.textContent = '🔄 Verbinding testen...';
+
+  try {
+    const resp = await fetch(url + '/status', { signal: AbortSignal.timeout(8000) });
+    const data = await resp.json();
+
+    if (data.configuratie?.refresh_token?.includes('✅')) {
+      localStorage.setItem('stravaWorkerUrl', url);
+      if (state.profile) { state.profile.stravaWorkerUrl = url; await db.settings.put({key:'profile',value:state.profile}); }
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--green-bright)">✅ Verbonden!</span>';
+      toast('✅ Strava verbonden!', 'success');
+      setTimeout(() => renderStravaScreen(), 500);
+    } else {
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ Worker bereikbaar maar tokens ontbreken. Check de README.</span>';
+    }
+  } catch(err) {
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--red-hot)">❌ Kan Worker niet bereiken. Controleer de URL.</span>';
+  }
+}
+
+async function renderStravaScreen() {
+  const c = document.getElementById('strava-content');
+  if (!c) return;
+
+  const workerUrl = getStravaWorkerUrl();
+
+  // Nog niet ingesteld — toon setup scherm
+  if (!workerUrl) {
+    c.innerHTML = `
+      <div class="card card-steel" style="margin:16px">
+        <div class="card-title">🔗 Strava Koppeling Instellen</div>
+        <div style="font-size:13px;color:var(--steel);margin-bottom:12px;line-height:1.6">
+          Volg de stappen in de README om je Cloudflare Worker in te stellen.
+          Daarna vul je hier de Worker URL in.
+        </div>
+        <div class="input-group">
+          <label class="input-label">Jouw Cloudflare Worker URL</label>
+          <input type="url" class="input-field" id="strava-worker-url"
+            placeholder="https://steel-smoke-strava.jouwnaam.workers.dev"
+            style="font-size:13px">
+        </div>
+        <div id="strava-connect-status" style="font-size:12px;margin:8px 0;min-height:20px"></div>
+        <button class="btn btn-green" onclick="saveStravaWorkerUrl()">✅ Verbinden</button>
+        <div style="margin-top:16px;padding:12px;background:rgba(39,174,96,0.08);border-radius:6px;border-left:3px solid var(--green)">
+          <div style="font-size:12px;color:var(--green-bright);font-weight:700;margin-bottom:6px">📋 Stap voor stap:</div>
+          <div style="font-size:12px;color:var(--steel-light);line-height:1.8">
+            1. Maak gratis account op <strong>cloudflare.com</strong><br>
+            2. Maak een Worker aan → plak de worker.js code erin<br>
+            3. Voeg 3 geheime codes toe (zie README)<br>
+            4. Doe eenmalig de Strava autorisatie<br>
+            5. Vul de Worker URL hierboven in
+          </div>
+        </div>
+      </div>`;
+    return;
+  }
+
+  // Laden
+  c.innerHTML = '<div style="padding:20px;text-align:center;color:var(--steel)">🔄 Strava activiteiten laden...</div>';
+
+  try {
+    const resp = await fetch(workerUrl + '/activiteiten?aantal=15', {
+      signal: AbortSignal.timeout(12000)
+    });
+    const data = await resp.json();
+
+    if (!data.succes || !data.activiteiten) {
+      throw new Error(data.error || 'Onbekende fout');
+    }
+
+    const acts = data.activiteiten;
+    if (acts.length === 0) {
+      c.innerHTML = '<div style="padding:20px;text-align:center;color:var(--steel)">Nog geen activiteiten gevonden. Train eerst iets! 💪</div>';
+      return;
+    }
+
+    const sportEmoji = {
+      'Run': '🏃', 'Walk': '🚶', 'Ride': '🚴', 'VirtualRide': '🚴',
+      'Swim': '🏊', 'Windsurf': '🏄', 'Hike': '🥾', 'Kayaking': '🛶',
+      'Rowing': '🚣', 'StandUpPaddling': '🏄', 'Workout': '💪',
+      'WeightTraining': '🏋️', 'Yoga': '🧘', 'Soccer': '⚽',
+    };
+
+    let html = `<div style="padding:0 16px 16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0">
+        <div style="font-family:var(--font-display);font-size:16px;letter-spacing:1px;color:var(--white)">
+          📡 ${acts.length} ACTIVITEITEN
+        </div>
+        <button onclick="renderStravaScreen()" style="background:var(--border);border:none;color:var(--steel);padding:5px 10px;border-radius:4px;font-size:12px;cursor:pointer">🔄 Verversen</button>
+      </div>`;
+
+    acts.forEach(act => {
+      const emoji = sportEmoji[act.type] || '🏅';
+      const datum = new Date(act.datum).toLocaleDateString('nl-NL', {
+        weekday:'short', day:'numeric', month:'short'
+      });
+      const isWindsurf = act.windsurf;
+
+      html += `<div class="card card-steel" style="margin-bottom:10px;cursor:pointer"
+          onclick="toonStravaActiviteit(${act.id})">
+        <div style="display:flex;align-items:flex-start;gap:10px">
+          <span style="font-size:28px;flex-shrink:0">${emoji}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:14px;margin-bottom:2px">${act.naam}</div>
+            <div style="font-size:11px;color:var(--steel);margin-bottom:6px">${datum} · ${act.type}${act.garmin_device ? ' · ' + act.garmin_device : ''}</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:${isWindsurf?'6px':'0'}">
+              <div style="background:rgba(0,0,0,0.2);border-radius:4px;padding:6px;text-align:center">
+                <div style="font-family:var(--font-mono);font-size:15px;color:var(--amber)">${act.afstand_km}</div>
+                <div style="font-size:9px;color:var(--steel)">km</div>
+              </div>
+              <div style="background:rgba(0,0,0,0.2);border-radius:4px;padding:6px;text-align:center">
+                <div style="font-family:var(--font-mono);font-size:15px;color:var(--amber)">${act.duur_hms}</div>
+                <div style="font-size:9px;color:var(--steel)">tijd</div>
+              </div>
+              <div style="background:rgba(0,0,0,0.2);border-radius:4px;padding:6px;text-align:center">
+                <div style="font-family:var(--font-mono);font-size:15px;color:var(--amber)">${act.gemSnelheid_kmh}</div>
+                <div style="font-size:9px;color:var(--steel)">km/u gem</div>
+              </div>
+            </div>
+            ${isWindsurf ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+              <div style="background:rgba(52,152,219,0.15);border-radius:4px;padding:6px;text-align:center;border:1px solid rgba(52,152,219,0.3)">
+                <div style="font-family:var(--font-mono);font-size:15px;color:#3498db">${act.gemSnelheid_knopen}</div>
+                <div style="font-size:9px;color:var(--steel)">knopen gem</div>
+              </div>
+              <div style="background:rgba(52,152,219,0.15);border-radius:4px;padding:6px;text-align:center;border:1px solid rgba(52,152,219,0.3)">
+                <div style="font-family:var(--font-mono);font-size:15px;color:#3498db">${act.maxSnelheid_knopen}</div>
+                <div style="font-size:9px;color:var(--steel)">knopen max</div>
+              </div>
+            </div>` : ''}
+            ${act.kcal ? `<div style="font-size:11px;color:var(--steel);margin-top:4px">🔥 ${act.kcal} kcal · Max ${act.maxSnelheid_kmh} km/u${act.hartslag_gem ? ' · ❤️ ' + act.hartslag_gem + ' bpm' : ''}</div>` : ''}
+          </div>
+          ${act.heeft_gps ? '<span style="color:var(--green-bright);font-size:11px;flex-shrink:0">🗺️</span>' : ''}
+        </div>
+      </div>`;
+    });
+
+    html += `<div style="font-size:11px;color:var(--steel);text-align:center;padding:8px">
+      Tik op een activiteit voor de kaart en details
+    </div></div>`;
+
+    c.innerHTML = html;
+
+  } catch(err) {
+    c.innerHTML = `<div style="padding:20px">
+      <div style="color:var(--red-hot);margin-bottom:12px">❌ Fout bij laden: ${err.message}</div>
+      <button class="btn btn-ghost btn-sm" onclick="renderStravaScreen()">Opnieuw proberen</button>
+      <button class="btn btn-ghost btn-sm" onclick="localStorage.removeItem('stravaWorkerUrl');renderStravaScreen()">Opnieuw instellen</button>
+    </div>`;
+  }
+}
+
+// Toon één activiteit met volledige kaart
+async function toonStravaActiviteit(id) {
+  const workerUrl = getStravaWorkerUrl();
+  if (!workerUrl) return;
+
+  // Maak overlay
+  let overlay = document.getElementById('strava-detail-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'strava-detail-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:9500;background:#0a0a0a;overflow-y:auto;';
+    document.body.appendChild(overlay);
+  }
+  overlay.style.display = 'block';
+  overlay.innerHTML = '<div style="padding:20px;text-align:center;color:var(--steel)">🔄 Activiteit laden...</div>';
+
+  // Sluit knop
+  const closeBtn = document.createElement('button');
+  closeBtn.style.cssText = 'position:fixed;top:16px;right:16px;z-index:9600;background:var(--red);border:none;color:white;padding:8px 14px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:700';
+  closeBtn.textContent = '✕ Sluiten';
+  closeBtn.onclick = () => { overlay.style.display='none'; };
+  overlay.appendChild(closeBtn);
+
+  try {
+    const resp = await fetch(workerUrl + '/activiteit/' + id, { signal: AbortSignal.timeout(15000) });
+    const data = await resp.json();
+    if (!data.succes) throw new Error(data.error);
+
+    const act = data.activiteit;
+    const isWindsurf = act.windsurf;
+
+    let html = `<div style="padding:16px;padding-top:56px">
+      <div style="font-family:var(--font-display);font-size:20px;letter-spacing:1px;margin-bottom:4px">${act.naam}</div>
+      <div style="font-size:12px;color:var(--steel);margin-bottom:16px">
+        ${new Date(act.datum).toLocaleDateString('nl-NL',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}
+        ${act.garmin_device ? ' · ' + act.garmin_device : ''}
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+        ${statBlok('📍 Afstand', act.afstand_km + ' km')}
+        ${statBlok('⏱️ Tijd', act.duur_hms)}
+        ${statBlok('💨 Gem snelheid', act.gemSnelheid_kmh + ' km/u')}
+        ${statBlok('⚡ Max snelheid', act.maxSnelheid_kmh + ' km/u')}
+        ${act.hoogtestijging ? statBlok('⛰️ Stijging', act.hoogtestijging + ' m') : ''}
+        ${act.kcal ? statBlok('🔥 Calorieën', act.kcal + ' kcal') : ''}
+        ${act.hartslag_gem ? statBlok('❤️ Hartslag gem', act.hartslag_gem + ' bpm') : ''}
+        ${act.hartslag_max ? statBlok('❤️ Hartslag max', act.hartslag_max + ' bpm') : ''}
+      </div>`;
+
+    if (isWindsurf) {
+      html += `<div style="background:rgba(52,152,219,0.12);border:1px solid rgba(52,152,219,0.4);border-radius:8px;padding:12px;margin-bottom:16px">
+        <div style="font-family:var(--font-display);font-size:14px;color:#3498db;margin-bottom:8px">🏄 WINDSURF SNELHEDEN</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div style="text-align:center">
+            <div style="font-family:var(--font-mono);font-size:28px;color:#3498db">${act.gemSnelheid_knopen}</div>
+            <div style="font-size:11px;color:var(--steel)">knopen gemiddeld</div>
+          </div>
+          <div style="text-align:center">
+            <div style="font-family:var(--font-mono);font-size:28px;color:#3498db">${act.maxSnelheid_knopen}</div>
+            <div style="font-size:11px;color:var(--steel)">knopen maximum</div>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    // Kaart
+    if (act.gps_route && act.gps_route.length > 2) {
+      html += `<div style="margin-bottom:16px">
+        <div style="font-size:12px;color:var(--steel);margin-bottom:6px">🗺️ ROUTE (${act.gps_punten_aantal} GPS punten)</div>
+        <div id="strava-map-${act.id}" style="height:300px;border-radius:8px;overflow:hidden;border:1px solid var(--border)"></div>
+      </div>`;
+    }
+
+    html += '</div>';
+    overlay.innerHTML = html;
+    overlay.appendChild(closeBtn);
+
+    // Teken Leaflet kaart
+    if (act.gps_route && act.gps_route.length > 2 && typeof L !== 'undefined') {
+      setTimeout(() => {
+        const mapEl = document.getElementById('strava-map-' + act.id);
+        if (!mapEl) return;
+        const map = L.map(mapEl, { zoomControl: true, attributionControl: false });
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:18, opacity:0.85 }).addTo(map);
+        const latLngs = act.gps_route.map(p => [p.lat, p.lng]);
+        const lijn = L.polyline(latLngs, { color: isWindsurf ? '#3498db' : '#27ae60', weight: 3 }).addTo(map);
+        L.circleMarker(latLngs[0], {radius:7, color:'#27ae60', fillColor:'#27ae60', fillOpacity:1}).addTo(map);
+        L.circleMarker(latLngs[latLngs.length-1], {radius:7, color:'#c0392b', fillColor:'#c0392b', fillOpacity:1}).addTo(map);
+        map.fitBounds(lijn.getBounds(), {padding:[12,12]});
+      }, 200);
+    }
+
+  } catch(err) {
+    overlay.innerHTML = `<div style="padding:20px;padding-top:56px">
+      <div style="color:var(--red-hot)">❌ Fout: ${err.message}</div>
+    </div>`;
+    overlay.appendChild(closeBtn);
+  }
+}
+
+function statBlok(label, waarde) {
+  return `<div style="background:var(--card);border-radius:6px;padding:10px;text-align:center">
+    <div style="font-size:10px;color:var(--steel);margin-bottom:4px">${label}</div>
+    <div style="font-family:var(--font-mono);font-size:16px;color:var(--amber)">${waarde}</div>
+  </div>`;
 }
 
 window.addEventListener('DOMContentLoaded', () => {
