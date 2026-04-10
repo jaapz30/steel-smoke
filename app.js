@@ -1,5 +1,5 @@
 'use strict';
-// BUILD: 20260410-0900 — v12.2: Strava/Garmin koppeling volledig
+// BUILD: 20260410-1800 — v12.3: Strava in Training scherm, mobiel fix
 
 // ── SERVICE WORKER REGISTRATIE ───────────────────────────────
 // Absoluut pad + scope expliciet opgeven = kritisch voor GitHub Pages PWA
@@ -2587,7 +2587,53 @@ async function stopTraining(){
 async function renderRecentTrainings(){
   const c=document.getElementById('recent-trainings');if(!c)return;
   const trainings=await db.trainings.orderBy('date').reverse().limit(10).toArray();
-  if(!trainings.length){c.innerHTML='<div style="color:var(--steel);font-size:14px;">Nog geen trainingen gelogd</div>';return;}
+
+  // Haal ook Strava activiteiten op als Worker ingesteld is
+  const workerUrl = getStravaWorkerUrl();
+  let stravaActs = [];
+  if (workerUrl) {
+    try {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 8000);
+      const resp = await fetch(workerUrl + '/activiteiten?aantal=5', { signal: controller.signal });
+      const data = await resp.json();
+      if (data.succes && data.activiteiten) stravaActs = data.activiteiten;
+    } catch(e) { /* stil falen als Strava niet beschikbaar is */ }
+  }
+
+  if(!trainings.length && !stravaActs.length){
+    c.innerHTML='<div style="color:var(--steel);font-size:14px;">Nog geen trainingen gelogd</div>';
+    return;
+  }
+
+  // Toon Strava activiteiten bovenaan als ze er zijn
+  let stravaHtml = '';
+  if (stravaActs.length > 0) {
+    const sportEmoji = {'Run':'🏃','Walk':'🚶','Ride':'🚴','Swim':'🏊','Windsurf':'🏄','Hike':'🥾','Rowing':'🚣','Workout':'💪','WeightTraining':'🏋️'};
+    stravaHtml = `<div style="font-size:11px;color:var(--amber);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;margin-top:4px">📡 Garmin / Strava</div>`;
+    stravaActs.forEach(act => {
+      const emoji = sportEmoji[act.type] || '🏅';
+      const datum = new Date(act.datum).toLocaleDateString('nl-NL',{day:'numeric',month:'short'});
+      stravaHtml += `<div onclick="toonStravaActiviteit(${act.id})" style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer;">
+        <div>
+          <div style="font-weight:700;font-size:14px">${emoji} ${act.naam}</div>
+          <div style="font-size:11px;color:var(--steel);font-family:var(--font-mono)">${datum} · ${act.duur_hms} · ${act.afstand_km} km</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-family:var(--font-mono);color:var(--amber);font-size:14px">${act.gemSnelheid_kmh} km/u</div>
+          ${act.windsurf ? `<div style="font-size:10px;color:#3498db">${act.gemSnelheid_knopen} kn</div>` : ''}
+          <div style="font-size:10px;color:var(--green-bright)">🗺️ tik voor kaart</div>
+        </div>
+      </div>`;
+    });
+    stravaHtml += `<div style="height:8px"></div>`;
+  }
+
+  if(!trainings.length){
+    c.innerHTML = stravaHtml + '<div style="color:var(--steel);font-size:13px;margin-top:8px">Nog geen app-trainingen gelogd</div>';
+    // Render Strava kaartjes niet nodig hier
+    return;
+  }
 
   // Laad GPS routes — index op id voor snelle opzoek
   const gpsRoutesList = await db.gpsRoutes.orderBy('date').reverse().limit(30).toArray();
@@ -2652,7 +2698,7 @@ async function renderRecentTrainings(){
     };
   });
 
-  c.innerHTML = htmlParts.map(x=>x.html).join('');
+  c.innerHTML = (typeof stravaHtml !== 'undefined' ? stravaHtml : '') + htmlParts.map(x=>x.html).join('');
 
   // Render Leaflet kaarten — iets langere delay zodat DOM en Leaflet klaar zijn
   setTimeout(() => {
@@ -3620,9 +3666,14 @@ async function renderStravaScreen() {
   c.innerHTML = '<div style="padding:20px;text-align:center;color:var(--steel)">🔄 Strava activiteiten laden...</div>';
 
   try {
+    // Langere timeout voor mobiel (langzamer netwerk)
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
     const resp = await fetch(workerUrl + '/activiteiten?aantal=15', {
-      signal: AbortSignal.timeout(12000)
+      signal: controller.signal,
+      cache: 'no-cache',
     });
+    clearTimeout(timer);
     const data = await resp.json();
 
     if (!data.succes || !data.activiteiten) {

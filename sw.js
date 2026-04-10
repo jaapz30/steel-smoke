@@ -1,6 +1,6 @@
 // ── SERVICE WORKER v6 — Steel & Smoke ────────────────────────
 // KRITISCH: versie bumpen bij elke deploy om cache te forceren
-const CACHE_VERSION = 'v12-20260410-0900';
+const CACHE_VERSION = 'v12-20260410-1800';
 const CACHE_NAME = 'steel-smoke-' + CACHE_VERSION;
 
 // Absolute paden — moeten exact overeenkomen met manifest start_url
