@@ -1,5 +1,5 @@
 'use strict';
-// BUILD: 20260410-2000 — v12.4: Strava in beweegbalk, hartslag, Cardio support
+// BUILD: 20260410-2100 — v12.5: Strava cache refresh bij dashboard bezoek
 
 // ── SERVICE WORKER REGISTRATIE ───────────────────────────────
 // Absoluut pad + scope expliciet opgeven = kritisch voor GitHub Pages PWA
@@ -987,7 +987,11 @@ function showScreen(name) {
   document.getElementById('screen-'+name)?.classList.add('active');
   document.querySelector(`[data-screen="${name}"]`)?.classList.add('active');
   state.currentScreen=name;
-  if(name==='dashboard') updateDashboard();
+  if(name==='dashboard') {
+    updateDashboard();
+    // forceRefresh=true: altijd verse data ophalen bij dashboard bezoek
+    refreshStravaTodayCache(true);
+  }
   if(name==='food')      { refreshFoodCache().then(() => renderMealSlots()); }
   if(name==='smoke')     updateSmokeScreen();
   if(name==='report')    renderReport(state.activePeriod);
@@ -1164,16 +1168,19 @@ async function updateMovementBar() {
   }
 }
 
-// Laad Strava activiteiten van vandaag — maximaal 1x per 5 minuten
+// Laad Strava activiteiten van vandaag
+// forceRefresh=true: altijd ophalen (bij dashboard bezoek)
+// forceRefresh=false: max 1x per 5 minuten (achtergrond interval)
 let _stravaRefreshTimer = null;
-async function refreshStravaTodayCache() {
+async function refreshStravaTodayCache(forceRefresh = false) {
   const workerUrl = getStravaWorkerUrl();
   if (!workerUrl) return;
 
   const today = new Date().toISOString().split('T')[0];
 
-  // Niet vaker dan elke 5 minuten ophalen
-  if (state._stravaTodayCache?.date === today &&
+  // Alleen throttlen bij achtergrond-refresh, niet bij handmatige aanroep
+  if (!forceRefresh &&
+      state._stravaTodayCache?.date === today &&
       state._stravaTodayCache?.fetchedAt &&
       Date.now() - state._stravaTodayCache.fetchedAt < 5 * 60 * 1000) {
     return;
