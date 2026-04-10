@@ -1,5 +1,5 @@
 'use strict';
-// BUILD: 20260410-1800 — v12.3: Strava in Training scherm, mobiel fix
+// BUILD: 20260410-2000 — v12.4: Strava in beweegbalk, hartslag, Cardio support
 
 // ── SERVICE WORKER REGISTRATIE ───────────────────────────────
 // Absoluut pad + scope expliciet opgeven = kritisch voor GitHub Pages PWA
@@ -634,8 +634,10 @@ let state = {
   settings:{ notifications:true, backgroundSync:true, sound:true, gymReminderEnabled:true },
   todayAdviceIndex:0,
   // Advies cache — voorkomt verspringen bij elke render
-  _adviceCache: null,      // { result, tijdvak, remaining, computedAt }
-  _adviceCacheMin: -1,     // minuut waarop de cache gemaakt is
+  _adviceCache: null,
+  _adviceCacheMin: -1,
+  // Strava cache — vandaag's activiteiten (max 5 min oud)
+  _stravaTodayCache: null,
 };
 
 // ── HYDRATIECOACH ─────────────────────────────────────────────
@@ -909,6 +911,10 @@ function initApp() {
   scheduleAllNotifications();
   // Hercheck notificaties elke 5 minuten
   setInterval(updateDashboardNotifications, 5 * 60 * 1000);
+  // Laad Strava activiteiten van vandaag voor de beweegbalk
+  refreshStravaTodayCache();
+  // Ververst elke 10 minuten automatisch
+  setInterval(refreshStravaTodayCache, 10 * 60 * 1000);
 }
 
 // ── CLOCK ────────────────────────────────────────────────────
@@ -1118,26 +1124,88 @@ async function updateNextMeal() {
 }
 
 // ── BEWEEGVOORTGANG BALK ──────────────────────────────────────
+// Telt ook Strava/Garmin activiteiten mee van vandaag
 async function updateMovementBar() {
-  const today=new Date().toISOString().split('T')[0];
-  const trainings=await db.trainings.where('date').startsWith(today).toArray();
-  const totalMin=Math.round(trainings.reduce((s,t)=>s+(t.duration||0),0)/60);
-  const pct=Math.min(100,Math.round(totalMin/DAILY_MOVE_GOAL_MIN*100));
-  const el=document.getElementById('move-bar-fill');
-  const lbl=document.getElementById('move-bar-label');
-  const status=document.getElementById('move-bar-status');
-  if(el) el.style.width=pct+'%';
-  if(lbl) lbl.textContent=`${totalMin}/${DAILY_MOVE_GOAL_MIN} min bewogen`;
-  if(status) {
-    if(pct>=100) { status.textContent='✅ Dagdoel gehaald!'; status.style.color='var(--green-bright)'; }
-    else         { status.textContent=`Nog ${DAILY_MOVE_GOAL_MIN-totalMin} min te gaan`; status.style.color='var(--steel)'; }
+  const today = new Date().toISOString().split('T')[0];
+
+  // Lokale trainingen
+  const trainings = await db.trainings.where('date').startsWith(today).toArray();
+  let totalMin = Math.round(trainings.reduce((s,t) => s+(t.duration||0), 0) / 60);
+  let totalKcal = trainings.reduce((s,t) => s+(t.kcal||0), 0);
+
+  // Strava activiteiten van vandaag meenemen
+  // Gebruik gecachede Strava data zodat de balk niet elke seconde API calls doet
+  const stravaToday = state._stravaTodayCache;
+  if (stravaToday && stravaToday.date === today) {
+    totalMin  += stravaToday.min;
+    totalKcal += stravaToday.kcal;
   }
-  // Color coding
-  if(el) el.style.background = pct>=100?'var(--green)':pct>=50?'var(--amber)':'var(--red)';
-  // NIET renderNextSportMoment() aanroepen hier — dat draait elke seconde
-  // en veroorzaakte het verspringen van adviezen.
-  // Het advies ververst alleen bij: initApp, showScreen(dashboard), nextAdvice knop,
-  // en na afloop van een training.
+
+  const pct = Math.min(100, Math.round(totalMin / DAILY_MOVE_GOAL_MIN * 100));
+  const el     = document.getElementById('move-bar-fill');
+  const lbl    = document.getElementById('move-bar-label');
+  const status = document.getElementById('move-bar-status');
+  const kcalEl = document.getElementById('dash-kcal-burned');
+
+  if (el) el.style.width = pct + '%';
+  if (el) el.style.background = pct>=100 ? 'var(--green)' : pct>=50 ? 'var(--amber)' : 'var(--red)';
+  if (lbl) lbl.textContent = `${totalMin}/${DAILY_MOVE_GOAL_MIN} min bewogen`;
+  if (kcalEl) kcalEl.textContent = totalKcal + ' kcal';
+
+  if (status) {
+    if (pct >= 100) {
+      status.textContent = '✅ Dagdoel gehaald!';
+      status.style.color = 'var(--green-bright)';
+    } else {
+      const stravaLabel = stravaToday?.min > 0 ? ` (incl. ${stravaToday.min} min Garmin)` : '';
+      status.textContent = `Nog ${DAILY_MOVE_GOAL_MIN - totalMin} min te gaan${stravaLabel}`;
+      status.style.color = 'var(--steel)';
+    }
+  }
+}
+
+// Laad Strava activiteiten van vandaag — maximaal 1x per 5 minuten
+let _stravaRefreshTimer = null;
+async function refreshStravaTodayCache() {
+  const workerUrl = getStravaWorkerUrl();
+  if (!workerUrl) return;
+
+  const today = new Date().toISOString().split('T')[0];
+
+  // Niet vaker dan elke 5 minuten ophalen
+  if (state._stravaTodayCache?.date === today &&
+      state._stravaTodayCache?.fetchedAt &&
+      Date.now() - state._stravaTodayCache.fetchedAt < 5 * 60 * 1000) {
+    return;
+  }
+
+  try {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 10000);
+    const resp = await fetch(workerUrl + '/activiteiten?aantal=10', {
+      signal: controller.signal, cache: 'no-cache'
+    });
+    const data = await resp.json();
+    if (!data.succes || !data.activiteiten) return;
+
+    // Filter activiteiten van vandaag
+    const vandaag = data.activiteiten.filter(a => (a.datum||'').startsWith(today));
+    const totMin  = vandaag.reduce((s,a) => s + Math.round((a.duur_sec||0)/60), 0);
+    const totKcal = vandaag.reduce((s,a) => s + (a.kcal||0), 0);
+
+    state._stravaTodayCache = {
+      date: today,
+      fetchedAt: Date.now(),
+      min: totMin,
+      kcal: totKcal,
+      activiteiten: vandaag,
+    };
+
+    // Ververs de beweegbalk met nieuwe data
+    updateMovementBar();
+    renderDayComparison();
+
+  } catch(e) { /* stil falen */ }
 }
 
 // ── SPORT ADVIES OP DASHBOARD ────────────────────────────────
@@ -3691,6 +3759,17 @@ async function renderStravaScreen() {
       'Swim': '🏊', 'Windsurf': '🏄', 'Hike': '🥾', 'Kayaking': '🛶',
       'Rowing': '🚣', 'StandUpPaddling': '🏄', 'Workout': '💪',
       'WeightTraining': '🏋️', 'Yoga': '🧘', 'Soccer': '⚽',
+      // Garmin specifieke types
+      'Cardio': '❤️', 'CardioWorkout': '❤️', 'IndoorCardio': '❤️',
+      'Elliptical': '🔄', 'StairStepper': '🪜', 'StrengthTraining': '🏋️',
+      'Cycling': '🚴', 'MountainBikeRide': '🚵', 'EBikeRide': '⚡',
+      'TrailRun': '🏃', 'NordicSki': '⛷️', 'AlpineSki': '🎿',
+      'Crossfit': '💪', 'RockClimbing': '🧗', 'Tennis': '🎾',
+      'Badminton': '🏸', 'Volleyball': '🏐', 'Basketball': '🏀',
+      'Golf': '⛳', 'Skateboard': '🛹', 'Surfing': '🏄',
+      'IceSkate': '⛸️', 'Snowboard': '🏂', 'Kitesurf': '🪁',
+      'WaterSport': '🌊', 'OpenWaterSwim': '🏊', 'Triathlon': '🏅',
+      'VirtualRun': '🏃', 'Pilates': '🧘', 'Treadmill': '🏃',
     };
 
     let html = `<div style="padding:0 16px 16px">
@@ -3739,7 +3818,12 @@ async function renderStravaScreen() {
                 <div style="font-size:9px;color:var(--steel)">knopen max</div>
               </div>
             </div>` : ''}
-            ${act.kcal ? `<div style="font-size:11px;color:var(--steel);margin-top:4px">🔥 ${act.kcal} kcal · Max ${act.maxSnelheid_kmh} km/u${act.hartslag_gem ? ' · ❤️ ' + act.hartslag_gem + ' bpm' : ''}</div>` : ''}
+            <div style="font-size:11px;color:var(--steel);margin-top:4px;display:flex;flex-wrap:wrap;gap:6px">
+              ${act.kcal ? `<span>🔥 ${act.kcal} kcal</span>` : ''}
+              ${act.hartslag_gem ? `<span>❤️ ${act.hartslag_gem} bpm gem</span>` : ''}
+              ${act.hartslag_max ? `<span>❤️ ${act.hartslag_max} bpm max</span>` : ''}
+              ${act.hoogtestijging > 0 ? `<span>⛰️ ${act.hoogtestijging}m</span>` : ''}
+            </div>
           </div>
           ${act.heeft_gps ? '<span style="color:var(--green-bright);font-size:11px;flex-shrink:0">🗺️</span>' : ''}
         </div>
